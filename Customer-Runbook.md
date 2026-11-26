@@ -187,6 +187,8 @@ Finish Pass A and keep the case open. Do this **before Cleanup**, including Clea
 | Handoff | Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` in the new combined ZIP. Pass A event logs are in `Events`, Pass B in `Events\PassB`. Packaging checks the names, sizes and hashes of the PML files present at finish. |
 | If interrupted | Turn off boot logging and close Procmon. Choose **Recover Pass B and package** to retrieve available evidence even if you could not save a PML. Inspect the reported gaps. |
 
+Allow time for conversion and verification. In the Windows 11 lab, a 7.0 GB raw boot log produced two PML segments totaling 5.48 GB. **Package case** took approximately 61 minutes to compress and verify the full 8.08 GB case on that VM. The 45-minute scheduled-task limit applies to DSA metrics collection. Leave the dashboard open until it shows **Open handoff folder** and the ZIP has a matching checksum.
+
 The same workflow is available in elevated PowerShell. Run each stage at the corresponding point above.
 
 ```powershell
