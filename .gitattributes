@@ -6,3 +6,5 @@
 *.json text eol=lf
 *.pdf binary
 *.docx binary
+*.zip binary
+*.sha256.txt text eol=lf

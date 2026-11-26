@@ -1,6 +1,8 @@
 # Trend support tool prerequisites
 
-Obtain the original Windows CMD and GUI archives for DSA Support Tool build **1.0.0.1203** through Trend support. Keep the ZIPs intact and place them beside this file using the exact names below. The installer checks both SHA-256 values. If Trend supplies another build, follow the update and validation procedure in the developer guide before using it. [Trend DSA Support Tool](https://success.trendmicro.com/en-US/solution/KA-0012444) · [Developer guide](../Developer/README.md)
+The downloadable customer kit already includes these files. To install from a Git checkout, you can extract the complete `dist/SWP-Customer-Kit.zip` to a fresh directory and run InstallTools there.
+
+For a new vendor build or an independent source installation, obtain the original Windows CMD and GUI archives for DSA Support Tool build **1.0.0.1203** through Trend support. Keep the ZIPs intact and place them beside this file using the exact names below. The installer checks both SHA-256 values. If Trend supplies another build, follow the update and validation procedure in the developer guide before using it. [Trend DSA Support Tool](https://success.trendmicro.com/en-US/solution/KA-0012444) · [Developer guide](../Developer/README.md)
 
 | Local filename | Expected SHA-256 |
 |---|---|
@@ -14,4 +16,4 @@ Get-FileHash -Algorithm SHA256 -LiteralPath '.\Tools\DSASupportTool-CMD.zip', '.
 .\SWP-Perf.ps1 -Stage InstallTools
 ```
 
-These archives are local build inputs. Obtain any additional tools required for optional analysis from their publisher.
+The builder can also recover these two exact inputs from the tracked customer ZIP. It verifies their SHA-256 values before including them in a new package. Obtain any additional tools required for optional analysis from their publisher.

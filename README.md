@@ -4,8 +4,8 @@ Investigate slow Windows sign-ins and first application launches on endpoints ru
 
 ## Run a capture
 
-1. Obtain the CMD and GUI Trend support-tool archives and place them in `Tools`. The installer requires the exact build and hashes listed in the [vendor prerequisites](Tools/README.md).
-2. Open elevated **64-bit Windows PowerShell 5.1** on the affected endpoint. From the repository root run `.\SWP-Perf.ps1 -Stage InstallTools`.
+1. Extract the complete customer kit into a new local folder. It contains both pinned Trend support tools. For a source-only installation, follow the [vendor prerequisites](Tools/README.md).
+2. Open elevated **64-bit Windows PowerShell 5.1** on the affected endpoint. From the extracted folder run `.\SWP-Perf.ps1 -Stage InstallTools`.
 3. Use **SWP Performance Collector** in Start, or use the CLI below. Follow the administrator runbook for protection settings, baseline timings and when to stop the trace. [Administrator runbook](Customer-Runbook.md)
 
 ```powershell

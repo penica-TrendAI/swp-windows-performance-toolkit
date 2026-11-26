@@ -32,8 +32,8 @@ With the pinned vendor bundles and the long publication test enabled, the suite 
 
 1. Preserve Windows PowerShell 5.1 compatibility, the complete vendor settings object and its encoding, ownership validation, new/retried case semantics and verified restoration. Run the portable fixture suite with the actual updated source.
 2. When updating a vendor build, review the new archive layout, entrypoint and configuration sections, validate its provenance and update the pinned SHA-256 in `Install-BundledTools`. Update the example config only after verifying the applied config for the new build.
-3. Set the candidate summary to the new collector digest and identify the live tests as pending. Rebuild a candidate and install from that archive on a lab machine. Exercise first sign-in after reboot, operator-assisted sign-out/sign-in and recovery after a failed WPR save. Offload and open all three handoffs. Confirm raw and parsed evidence, event loss, time coverage, nested native archive integrity, unrelated recording ownership and cleanup across cases. Check the original machine state after each test.
-4. Record actual results, runtime versions, known gaps and script digest in `Validation-summary.json`. Distinguish fixture results from live acceptance. A stale summary for a different collector hash causes the packager to stop.
+3. Keep the validation summary tied to the collector that was actually tested. Build a candidate and install from that archive on a lab machine. Exercise first sign-in after reboot, operator-assisted sign-out/sign-in and recovery after a failed WPR save. Offload and open all three handoffs. Confirm raw and parsed evidence, event loss, time coverage, nested native archive integrity, unrelated recording ownership and cleanup across cases. Check the original machine state after each test.
+4. Record actual results, runtime versions, known gaps and script digest in `Validation-summary.json`. Distinguish fixture results from live acceptance. The generated `Package-info.json` identifies whether the packaged collector matches that recorded digest.
 
 ## Edit and render the documentation
 
@@ -47,15 +47,19 @@ py -3 .\Developer\render_handbook.py --pdf
 
 This produces `Documentation/SWP-Perf-Handbook.docx`, `SWP-Perf-Handbook.pdf` and the participant and solo-administrator PDFs. The solo checklist is also emitted as Markdown. Inspect every rendered page, including code wrapping and table splits. Validate JSON examples and PowerShell syntax on Windows. Compare all documented stages, parameter names, defaults and output paths with the release code. Keep the standalone administrator runbook aligned with the handbook.
 
-## Build and verify a distributable ZIP
+## Build and verify the customer ZIP
 
-The support analyst’s instructions ship at `skills/analyze-swp-performance/SKILL.md`. The package builder reads it directly from this repository and verifies the archived bytes.
-
-Supply the pinned local archives as described in [vendor prerequisites](../Tools/README.md). The build utility uses only the Python standard library. From the extracted kit, choose a new output path outside the working copy. The utility lists shipping files explicitly, checks the collector digest against the validation summary, reads back all members and creates a sibling SHA-256 file. It rejects an existing archive or checksum at the destination. Keep customer archives, paths and lab capture logs out of the distribution.
+The download is tracked at `dist/SWP-Customer-Kit.zip`, beside its `.sha256.txt` file. On every push to `main`, the **Update customer kit** workflow builds the allowlisted members from the latest branch contents and verifies every member. If the bytes changed, it commits the ZIP and checksum together. A push affecting only unrelated files leaves the download unchanged. The workflow can also be run manually on `main`.
 
 ```powershell
-py -3 .\Developer\build_kit.py --output C:\SWP-Release\SWP-Customer-Kit.zip
-Get-FileHash -LiteralPath 'C:\SWP-Release\SWP-Customer-Kit.zip' -Algorithm SHA256
+py -3 .\Developer\build_kit.py --refresh
+py -3 .\Developer\build_kit.py --check
 ```
 
-Compare that hash with the first field of `SWP-Customer-Kit.zip.sha256.txt`. Extract the finished ZIP into a fresh directory, open the PDF and verify the flat install layout with the script and both WPR profiles beside `Tools`. Documentation-only releases have new ZIP checksums. The collector digest identifies the tested script across those releases. The dated lab validation includes Windows 11 and core 20.0.3-31610. Confirm the relevant build on an affected computer before extending the compatibility claim.
+Use `--output C:\SWP-Release\SWP-Customer-Kit.zip` to build at an unused path. Builds use fixed ZIP metadata and member order, so identical inputs yield identical bytes across checkouts. `--check` exits unsuccessfully if the contents or checksum are stale.
+
+`MEMBERS` in the builder defines what ships, including the analysis skill. To add a new distributable file, add it to that list. Handbook edits should include the regenerated Word and PDF versions. The builder copies those reviewed documents as committed.
+
+For an ordinary rebuild, the two vendor tools come from the existing tracked ZIP. A local copy under `Tools` takes precedence. Every copy must match its pinned hash. For a vendor upgrade, supply the new originals locally, update the pins and installer checks, validate the build, then commit the refreshed ZIP alongside the source change. [Vendor prerequisites](../Tools/README.md)
+
+`Package-info.json` in the ZIP gives the packaged collector hash, the collector hash from the last recorded validation and a match flag. A source update refreshes the download immediately after the workflow succeeds. The validation summary changes when maintainers record new results.

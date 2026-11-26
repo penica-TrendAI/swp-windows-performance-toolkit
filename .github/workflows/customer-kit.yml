@@ -1,0 +1,47 @@
+name: Update customer kit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-customer-kit-main
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+      - name: Rebuild, verify and publish the customer download
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git checkout --quiet --detach FETCH_HEAD
+            python3 Developer/build_kit.py --refresh
+            python3 Developer/build_kit.py --check
+            git add -- dist/SWP-Customer-Kit.zip dist/SWP-Customer-Kit.zip.sha256.txt
+            if git diff --cached --quiet; then
+              echo "The tracked customer kit is current."
+              exit 0
+            fi
+            git commit -m 'Refresh customer kit and checksum'
+            if git push origin HEAD:refs/heads/main; then
+              exit 0
+            fi
+            echo "Push did not complete. Retrying from the latest main."
+          done
+          exit 1
