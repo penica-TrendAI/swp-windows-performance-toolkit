@@ -431,6 +431,19 @@ function Copy-NewMetricBatches {
             if ((Get-Item -LiteralPath $tmp).Length -ne $f.Length) { continue }
             $records = @(Read-MetricsText ([IO.File]::ReadAllText($tmp)) $rel)
             if (!$records.Count) { continue }
+            $earliest = ([datetimeoffset]$SinceUtc.ToUniversalTime()).ToUnixTimeMilliseconds() - 5000
+            $latest = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 5000
+            $current = $false
+            foreach ($record in $records) {
+                if ($record.hostname -eq $env:COMPUTERNAME -and [string]$record.time -match '^\d{13}$' -and
+                    [long]$record.time -ge $earliest -and [long]$record.time -le $latest) { $current = $true; break }
+            }
+            if (!$current) {
+                $Copied[$rel] = $version
+                [pscustomobject]@{Source=$rel;Reason='No current host/time sample';Bytes=$f.Length} |
+                    ConvertTo-Json -Compress | Add-Content -LiteralPath "$Destination\Skipped-batches.jsonl" -Encoding UTF8
+                continue
+            }
             $hash = (Get-FileHash -LiteralPath $tmp).Hash
             if ($LiveFolder) {
                 $liveFile = Join-Path $LiveFolder $rel
@@ -1021,6 +1034,7 @@ function Get-CaseEvidenceAssessment {
         if ($PassName -eq 'PassB') {
             foreach ($gap in (Get-PmlEvidenceGaps "$Case\Procmon" $Phase.RunId)) { $Gaps.Add($gap) }
             if (!$Phase.Finished) { $Gaps.Add('Pass B has not finished.') }
+            if ($Phase.ReproductionEndSource -in 'FinishB','Recovery') { $Gaps.Add('Pass B used the finish or recovery time as the window end. Use the operator notes to locate the end of the symptom.') }
             $bScan = Get-ScanCoverage $CaseFiles $Start $End 'PassB'
             $bNotes = Get-OperatorNotesAssessment $Start $End 'PassB'
             if ($bScan.Status -ne 'Observed' -or $bScan.Errors.Count) { $Gaps.Add("Pass B scan coverage: $($bScan.Message) Review the Pass B milestones and inputs.") }
@@ -2206,7 +2220,7 @@ function Show-CollectorWindow {
                 if ($view.ActiveB) { $choices += 'RecoverB' }
                 else {
                     if ($entry.Phase.TraceSaved -or $entry.Phase.Finished) { $choices += 'Package','Diagnostics' }
-                    if ($entry.Open) { $choices += 'RecoverAndPackage','RestoreTrace' }
+                    if ($entry.Open -and !$entry.Phase.Finished) { $choices += 'RecoverAndPackage','RestoreTrace' }
                 }
             }
             if ($known.Count) { $choices += 'Restore','Delete' }
@@ -2510,16 +2524,24 @@ function Assert-PassBBoot {
 }
 
 function Set-PassBReproductionEnd {
+    param([string]$Source)
     $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
     if ($boot -le (Parse-StateDateTime $State.PreparedBoot).ToUniversalTime()) { return }
     if (!$State.ReproductionEndUtc) {
         $State | Add-Member -NotePropertyName RecordedBootUtc -NotePropertyValue ($boot.ToString('o')) -Force
         $State | Add-Member -NotePropertyName ReproductionEndUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+        $State | Add-Member -NotePropertyName ReproductionEndSource -NotePropertyValue $Source -Force
         Save-State
     }
-    if ($State.RecordedBootUtc -and $boot -eq (Parse-StateDateTime $State.RecordedBootUtc).ToUniversalTime()) {
-        try { Save-SignInMilestones -PassName PassB } catch { $_.Exception.Message | Out-File "$Case\Procmon\SignIn-milestone-error.txt" }
+}
+
+function Save-PassBMilestones {
+    $file = Join-Path $Case 'Procmon\SignIn-milestones.json'
+    if (Test-Path -LiteralPath $file -PathType Leaf) {
+        $previous = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+        if ($previous.SessionCorroborated) { return }
     }
+    Save-SignInMilestones -PassName PassB
 }
 
 function Invoke-Finish {
@@ -2535,9 +2557,13 @@ function Invoke-Finish {
             try {
                 $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
                 Assert-PassBBoot $boot
-                Set-PassBReproductionEnd
+                Set-PassBReproductionEnd 'Recovery'
+                if ($State.RecordedBootUtc) { Save-PassBMilestones }
             } catch { Write-Warning "Pass B sign-in window unverified: $($_.Exception.Message)" }
-        } else { Set-PassBReproductionEnd }
+        } else {
+            Set-PassBReproductionEnd 'FinishB'
+            try { Save-PassBMilestones } catch { $_.Exception.Message | Out-File "$Case\Procmon\SignIn-milestone-error.txt" }
+        }
     }
 if (!$Recovery -and $Pass -eq 'PassA' -and -not $State.TraceSaved) { throw 'Run -Stage StopTrace immediately after the measured reproduction first.' }
 $Deadline = (Get-Date).AddMinutes(46)
@@ -2934,12 +2960,13 @@ try {
         Read-CollectionState -Pass $Pass -RequireReboot:($Pass -eq 'PassB')
         if ($Pass -eq 'PassB') {
             if ($State.Finished -or $State.PreparationComplete -eq $false) { throw 'Pass B is not ready for an early snapshot.' }
-            Set-PassBReproductionEnd
+            Set-PassBReproductionEnd 'EarlySnapshot'
         }
         Save-AMDebug -Label "$Pass-Early"
         if ($Pass -eq 'PassB') {
             $State | Add-Member -NotePropertyName EarlyDebugSavedUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
             Save-State
+            try { Save-PassBMilestones } catch { $_.Exception.Message | Out-File "$Case\Procmon\SignIn-milestone-error.txt" }
         }
     }
     'Diagnostics' {

@@ -26,7 +26,7 @@ $r.Results | Group-Object Status | Select-Object Name, Count
 $r | Select-Object PowerShell, SourceSHA256, SourceSHA256After, SourceChangedDuringRun
 ```
 
-With the pinned vendor bundles and the long publication test enabled, the suite runs **45 tests** using generated inputs. Omit `-VendorKitRoot` on a source-only checkout to skip the vendor installation test. Omit `-LongPublicationTest` for a shorter run. `-Baseline` selects checks used to compare an older collector revision.
+With the pinned vendor bundles and the long publication test enabled, the suite uses generated inputs and includes the desktop button and delayed-publication tests. Omit `-VendorKitRoot` on a source-only checkout to skip the vendor installation test. Omit `-LongPublicationTest` for a shorter run. `-Baseline` selects checks used to compare an older collector revision.
 
 ## Change and validate the collector
 

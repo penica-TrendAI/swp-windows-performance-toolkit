@@ -761,6 +761,18 @@ Write-Output 'file name = diag-[fresh].zip'
             $saved=@(Get-ChildItem -LiteralPath $dest -Recurse -Filter '*_jsonRecords.json')
             Assert-True ($saved.Count -eq 1 -and @(Get-Content -LiteralPath "$dest\Batches.jsonl").Count -eq 1 -and (Get-ToolMetricsAssessment -Paths $saved[0].FullName -SinceUtc $Start -RequiredEndUtc $End).ArtifactRecordsVerified) 'Saved series did not survive source removal.'
         }
+        Test-Case 'Final loose metrics exclude old samples and a batch already preserved live' {
+            $src=Join-Path $Root 'TwoMetricsRuns';$dest=Join-Path $Root 'FinalBatches';$live=Join-Path $Root 'LiveBatches'
+            $old='20010615-141900';$new='20010615-153000'
+            $null=New-Item -ItemType Directory "$src\$old","$src\$new","$live\$new",$dest -Force
+            New-RecordsText -At $Start.AddHours(-1)|Set-Content "$src\$old\141905_jsonRecords.json"
+            New-RecordsText -At $Start|Set-Content "$src\$new\153005_jsonRecords.json"
+            Copy-Item "$src\$new\153005_jsonRecords.json" "$live\$new"
+            New-RecordsText -At $Start.AddSeconds(15)|Set-Content "$src\$new\153020_jsonRecords.json"
+            Copy-NewMetricBatches $src $dest $Start @{} $live
+            $saved=@(Get-ChildItem $dest -Recurse -Filter '*_jsonRecords.json')
+            Assert-True ($saved.Count -eq 1 -and $saved[0].Name -eq '153020_jsonRecords.json' -and (Test-Path "$dest\Skipped-batches.jsonl")) 'Old or duplicate batch included, or new batch lost.'
+        }
         Test-Case 'Wrong case or run cannot control metrics task or cancel WPR' {
             $ToolRoot='C:\Program Files\SWP-PerfTools';$ToolFolder=Join-Path $ToolRoot DSASupportTool
             $valid='C:\SWP-Perf\CASE-A';$id=[guid]::NewGuid().ToString('N')
