@@ -17,13 +17,20 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-      - name: Run Windows PowerShell 5.1 collector tests
+      - name: Check collector workflows on Windows PowerShell 5.1
         shell: powershell
         run: |
           $kit = Join-Path $env:RUNNER_TEMP 'customer-kit'
           Expand-Archive -LiteralPath 'dist/SWP-Customer-Kit.zip' -DestinationPath $kit
           Copy-Item -LiteralPath SWP-Perf.ps1 -Destination $kit -Force
           $results = Join-Path $env:RUNNER_TEMP 'collection-results'
+          & powershell.exe -NoProfile -STA -File Developer\CollectionScript.Tests.ps1 -SourcePath SWP-Perf.ps1 -VendorKitRoot $kit -ResultsFolder $results
+          exit $LASTEXITCODE
+      - name: Verify the full suite including delayed native diagnostic publication
+        shell: powershell
+        run: |
+          $kit = Join-Path $env:RUNNER_TEMP 'customer-kit'
+          $results = Join-Path $env:RUNNER_TEMP 'full-results'
           & powershell.exe -NoProfile -STA -File Developer\CollectionScript.Tests.ps1 -SourcePath SWP-Perf.ps1 -VendorKitRoot $kit -LongPublicationTest -ResultsFolder $results
           $result = $LASTEXITCODE
           if (Test-Path "$results\Regression-results.json") {

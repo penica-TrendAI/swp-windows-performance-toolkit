@@ -31,7 +31,8 @@ function Test-Case {
     try { & $Action; $Results.Add([pscustomobject]@{Name=$Name;Status='PASS';Error=$null}); Write-Host "PASS $Name" }
     catch { $Results.Add([pscustomobject]@{Name=$Name;Status='FAIL';Error=$_.Exception.ToString()}); Write-Host "FAIL $Name : $($_.Exception.Message)" }
 }
-$Root=Join-Path $env:TEMP ('SWP Collector Tests '+[guid]::NewGuid().ToString('N'))
+$fixtureBase=if ($env:RUNNER_TEMP) {$env:RUNNER_TEMP} else {[IO.Path]::GetFullPath($env:TEMP)}
+$Root=Join-Path $fixtureBase ('SWP Collector Tests '+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Root | Out-Null
 New-Item -ItemType Directory -Path $ResultsFolder -Force | Out-Null
 $Case=Join-Path $Root 'CASE-Test'
@@ -166,7 +167,9 @@ switch ($Stage) {
                     $w=$script:guiProbe.Window
                     if (!$w) {return}
                     try {
-                        if ([datetime]::UtcNow -gt $script:guiProbe.Deadline) {throw "Window timed out at step $($script:guiProbe.Step)"}
+                        if ($w.FindName('Title').Text -eq 'Case requires review' -or [datetime]::UtcNow -gt $script:guiProbe.Deadline) {
+                            throw "Window at step $($script:guiProbe.Step): $($w.FindName('Title').Text), $($w.FindName('ProgressLabel').Text), $($w.FindName('Instruction').Text), $($w.FindName('Output').Text)"
+                        }
                         $primary=$w.FindName('Primary')
                         if (!$primary.IsEnabled) {return}
                         $other=$w.FindName('Other')
@@ -829,7 +832,7 @@ Write-Output 'file name = diag-[fresh].zip'
     [pscustomobject]@{RunAt=(Get-Date -Format o);PowerShell=$PSVersionTable.PSVersion.ToString();Source=$SourcePath;SourceSHA256=$SourceHashBefore;SourceSHA256After=$SourceHashAfter;SourceChangedDuringRun=($SourceHashBefore -ne $SourceHashAfter);Baseline=[bool]$Baseline;Results=@($Results.ToArray());Note='Real Windows file/ZIP/ACL/native-CMD tests; Trend service, reboot, WPR and scheduled-task interactions are simulated or inspected, not a real customer capture.'} |
         ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $ResultsFolder $(if($Baseline){'Baseline-results.json'}else{'Regression-results.json'})) -Encoding UTF8
     # Only this test run's random fixture root is deleted; no collector Cleanup action runs.
-    if ($Root.StartsWith($env:TEMP,[StringComparison]::OrdinalIgnoreCase) -and (Split-Path $Root -Leaf) -like 'SWP Collector Tests *') { Remove-Item -LiteralPath $Root -Recurse -Force }
+    if ((Split-Path $Root -Parent) -eq $fixtureBase -and (Split-Path $Root -Leaf) -like 'SWP Collector Tests *') { Remove-Item -LiteralPath $Root -Recurse -Force }
 }
 if (@($Results|Where-Object Status -eq 'FAIL').Count) { exit 1 }
 exit 0
