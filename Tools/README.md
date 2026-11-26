@@ -1,8 +1,8 @@
 # Trend support tool prerequisites
 
-The downloadable customer kit already includes these files. To install from a Git checkout, you can extract the complete `dist/SWP-Customer-Kit.zip` to a fresh directory and run InstallTools there.
+The customer kit includes the pinned DSA Support Tool CMD for normal collection. Install from a fresh extraction of `dist/SWP-Customer-Kit.zip`, or supply its original CMD archive under `Tools` for a source installation. The builder can also reuse this archive from the tracked customer ZIP.
 
-For a new vendor build or an independent source installation, obtain the original Windows CMD and GUI archives for DSA Support Tool build **1.0.0.1203** through Trend support. Keep the ZIPs intact and place them beside this file using the exact names below. The installer checks both SHA-256 values. If Trend supplies another build, follow the update and validation procedure in the developer guide before using it. [Trend DSA Support Tool](https://success.trendmicro.com/en-US/solution/KA-0012444) · [Developer guide](../Developer/README.md)
+The vendor GUI is optional. If Trend support requests a GUI diagnostic, sign in to the Business Support Portal, open **Diagnostic Tools**, and download the current Windows DSA Support Tool **GUI**. For a separate capture, extract that package into its own folder and follow the administrator runbook. If supplying the older pinned GUI archive to the toolkit installer, use the exact name and hash below. [Trend download and usage instructions](https://success.trendmicro.com/en-US/solution/KA-0012444)
 
 | Local filename | Expected SHA-256 |
 |---|---|
@@ -12,8 +12,6 @@ For a new vendor build or an independent source installation, obtain the origina
 From the repository root in Windows PowerShell, verify the downloads and install the collector in an elevated session.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath '.\Tools\DSASupportTool-CMD.zip', '.\Tools\DSASupportTool-GUI.zip'
+Get-FileHash -Algorithm SHA256 -LiteralPath '.\Tools\DSASupportTool-CMD.zip'
 .\SWP-Perf.ps1 -Stage InstallTools
 ```
-
-The builder can also recover these two exact inputs from the tracked customer ZIP. It verifies their SHA-256 values before including them in a new package. Obtain any additional tools required for optional analysis from their publisher.

@@ -4,13 +4,13 @@
 
 **Collector revision** 26 November 2026 · **Documentation edition** 26 November 2026
 
-For role-specific instructions, see the [full handbook](Documentation/SWP-Perf-Handbook.pdf). Give the person signing in the [one-page participant instructions](Documentation/Participant-sheet.pdf). When the affected user is also a local administrator, use the [solo administrator checklist](Documentation/Administrator-participant.pdf) or its [copyable commands](Documentation/Administrator-participant.md). Developers can start with the [maintenance guide](Developer/README.md).
+For a printable procedure, open the [collection guide](Customer-Collection-Guide.pdf). Give the person signing in the [one-page timing sheet](Documentation/Participant-sheet.pdf). Administrators testing their own account can use the [solo administrator checklist](Documentation/Administrator-participant.pdf).
 
 Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI Vision One Server & Workload Protection / Deep Security Agent already installed. It collects the slow reboot, sign-in and first application launches in one pass. The scheduled Trend CMD tool samples agent metrics every five seconds for 15 minutes after initialization. The task has a 45-minute cap. WPR captures Windows file I/O and process starts. The script separately checks whether AMSP logged paired per-file scan timings during sign-in. An immediate sign-in in the lab had no paired scan records between authentication and Explorer. In a separate lab run, waiting two minutes at the sign-in screen produced 218 paired scan timings across 211 paths between authentication and Explorer. The handoff assesses coverage for each run. If the delay also occurs after signing out, the same-boot scenario provides a second way to measure it.
 
 ## 1. Set up on the affected computer
 
-1. If using the GitHub source, add the two pinned archives following [vendor prerequisites](Tools/README.md). If using a preassembled kit, extract the complete customer ZIP into a local folder such as `C:\SWP-Customer-Kit`. Keep the two `.wprp` profiles and the `Tools` folder beside `SWP-Perf.ps1`.
+1. Verify the ZIP checksum as described in the collection guide, then extract the complete customer ZIP into a local folder such as `C:\SWP-Customer-Kit`. Keep the two `.wprp` profiles and the `Tools` folder beside `SWP-Perf.ps1`.
 2. Open **64-bit Windows PowerShell as administrator**. Run the following, adjusting the extracted folder path if necessary.
 
    ```powershell
@@ -20,7 +20,7 @@ Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI 
    $swp = Join-Path $toolRoot 'SWP-Perf.ps1'
    ```
 
-   Setup checks the bundled archives by SHA-256 and extracts Trend's CMD and GUI support tools, build **1.0.0.1203**. It reuses a matching executable and preserves the existing tool configuration. If Windows blocks script execution, use your organization's approved signing or execution process.
+   Setup verifies the included archive by SHA-256 and installs the Trend DSA Support Tool CMD, build **1.0.0.1203**. It reuses a matching executable and preserves the existing tool configuration. If Windows blocks script execution, use your organization's approved signing or execution process.
 
 3. Check Windows Performance Recorder and the installed sign-in profile.
 
@@ -36,7 +36,7 @@ Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI 
 
 ### Choose the collector window or PowerShell
 
-After installation, open **SWP Performance Collector** from the Windows Start menu and approve elevation. You can also run `& $swp` or `& $swp -Stage Gui` in an elevated desktop PowerShell session. If your organization restricts scripts, launch from its approved PowerShell environment. On a Windows client with every execution-policy scope unconfigured, the shortcut starts its child with process-only RemoteSigned. Explicit policies still apply. The separate **Trend DSA Support Tool GUI** is for vendor diagnostics.
+After installation, open **SWP Performance Collector** from the Windows Start menu and approve elevation. You can also run `& $swp` or `& $swp -Stage Gui` in an elevated desktop PowerShell session. If your organization restricts scripts, launch from its approved PowerShell environment. On a Windows client with every execution-policy scope unconfigured, the shortcut starts its child with process-only RemoteSigned. Explicit policies still apply. The collection window is part of the PowerShell script.
 
 | When | Collector window | Command line |
 |---|---|---|
@@ -154,7 +154,9 @@ When the status is **Succeeded**, run `-Stage RestoreTrace` if restoration was d
 
 Wait for **ARCHIVE INTEGRITY VERIFIED** and note the printed paths. If the message also says **EVIDENCE GAPS REMAIN**, preserve the ZIP but report it as partial evidence. Review `Evidence-assessment.json`, the packaging summary and `Trend\PassA\VerifiedToolMetrics\Metrics-assessment.json`. A ZIP containing metric records is recognized even when there is no loose JSON. Sampling gaps and initial agent-readiness gaps are reported separately; Pass A/B are assessed in their own time windows. Archive verification checks file integrity. For collection coverage, verify the WPR save output for event loss and compare the metric and debug log timestamps with the recorded delay. A scheduled task exit code of 0 alone cannot establish that metric samples were captured.
 
-Restore the original self-protection setting or inheritance through the management console, verify that it has applied and record the restoration time. **Original INI restored does not necessarily mean debug is disabled.** If debug was already requested before the test, restoration deliberately retains it and issues a warning. Review the intended normal logging state with its owner/Trend support; do not delete a pre-existing INI by guessing. If you update the notes or add evidence after packaging, run `& $swp -Stage Package` to create a new verified ZIP. If Trend support also requests a GUI support-tool package, run the bundled GUI from `C:\Program Files\SWP-PerfTools\DSASupportTool_GUI`, use **Collect Data**, copy its result into the current case’s `Trend\FinalDiagnostics`, close the GUI and rerun `Package`.
+Restore the original self-protection setting or inheritance through the management console, verify that it has applied and record the restoration time. **Original INI restored does not necessarily mean debug is disabled.** If debug was already requested before the test, restoration deliberately retains it and issues a warning. Review the intended normal logging state with its owner/Trend support; do not delete a pre-existing INI by guessing. If you update the notes or add evidence after packaging, run `& $swp -Stage Package` to create a new verified ZIP.
+
+**Optional vendor GUI download.** If Trend support requests a separate GUI diagnostic, sign in to the Trend Micro Business Support Portal, open **Diagnostic Tools**, and download the current Windows **DSA Support Tool GUI**. Extract the complete ZIP to its own local folder, run the GUI as administrator, and choose **Data Collection for DSA → Collect Data**. Copy the resulting `DSTool-PRODUCT-*.zip` and matching checksum text file from the tool folder into the current case’s `Trend\FinalDiagnostics`. Close the GUI and rerun `Package`. [Trend download and usage instructions](https://success.trendmicro.com/en-US/solution/KA-0012444)
 
 ### Add the relevant login and policy context
 
@@ -256,4 +258,4 @@ If `StopTrace` fails, keep the case and run `& $swp -Stage RecoverAndPackage` be
 
 ## Validation
 
-See `Validation-summary.json` in this kit for the tested versions and scenarios. For each customer capture, check the evidence assessment against the operator’s observed delay.
+The [release validation summary](https://github.com/penica-TrendAI/swp-windows-performance-toolkit/blob/main/Validation-summary.json) lists the tested versions and scenarios. For each customer capture, check the evidence assessment against the operator’s observed delay.

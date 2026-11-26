@@ -26,7 +26,7 @@ Diagnostic failures are recorded explicitly; a verified outer ZIP can still cont
 incomplete collection. If a diagnostic controller is still running, packaging stops.
 
 OTHER ACTIONS:
-  InstallTools   Extract and verify the bundled Trend CMD and GUI tools.
+  InstallTools   Install the collector and verified Trend CMD tool. The vendor GUI is optional.
   Finish          Same collection/diagnostics/restoration; no outer ZIP.
   Diagnostics     Request a fresh agent diagnostic and copy available raw debug logs.
   Package         Package the entire existing case, including a CLI diagnostic attempt
@@ -2118,7 +2118,7 @@ function Install-BundledTools {
     param([string]$KitRoot)
     $Bundles = @(
         @{ Zip='DSASupportTool-CMD.zip'; Folder='DSASupportTool'; Exe='DSASupportTool_CMD.exe'; Hash='17297B8ABB8193D7552C4A0023723ED0FEE29B93849B97C91DC69300E6520C42' }
-        @{ Zip='DSASupportTool-GUI.zip'; Folder='DSASupportTool_GUI'; Exe='DSASupportTool_GUI.exe'; Hash='090E62DB8CD47663A314A0778083A18941DFE885715FA18A28D795508B9ED68F' }
+        @{ Optional=$true; Zip='DSASupportTool-GUI.zip'; Folder='DSASupportTool_GUI'; Exe='DSASupportTool_GUI.exe'; Hash='090E62DB8CD47663A314A0778083A18941DFE885715FA18A28D795508B9ED68F' }
     )
     if (Test-Path -LiteralPath $ToolRoot) {
         if ((Get-Item -LiteralPath $ToolRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -2127,6 +2127,7 @@ function Install-BundledTools {
     }
     foreach ($Bundle in $Bundles) {
         $Archive = Join-Path $KitRoot ('Tools\' + $Bundle.Zip)
+        if ($Bundle.Optional -and -not (Test-Path -LiteralPath $Archive)) { continue }
         if (-not (Test-Path -LiteralPath $Archive -PathType Leaf)) { throw "Bundled archive missing: $Archive. Extract the entire customer kit first." }
         if ((Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $Bundle.Hash) {
             throw "Bundled archive hash mismatch: $Archive"
