@@ -109,6 +109,8 @@ try {
             Assert-True ((Get-CollectorView $null $false $boot).Action -eq 'InstallTools') 'Install missing'
             Assert-True ((Get-CollectorView $null $true $boot).Action -eq 'Prepare') 'Prepare missing'
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Instructions') 'Stop offered before restart'
+            $message = (Get-CollectorView $entry $true $boot).Message
+            Assert-True ($message.Contains('stay at the sign-in screen') -and $message.Contains("-Stage CheckSignInReady -Pass PassA -Case '$dir'")) 'Missing Pass A participant or administrator instruction'
             Assert-True ((Get-CollectorView $entry $true $boot.AddMinutes(1)).Action -eq 'StopTrace') 'Stop missing'
             '{"Saved":false}'|Set-Content "$dir\WPR\Trace-quality.json"
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Review') 'Failure hidden'
@@ -125,6 +127,8 @@ try {
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Review') 'Partial preparation offered a restart'
             $b.PreparationComplete=$true; $b|ConvertTo-Json|Set-Content $bp
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Instructions') 'B offered premature finish'
+            $message = (Get-CollectorView $entry $true $boot).Message
+            Assert-True ($message.Contains('Enable Boot Logging') -and $message.Contains("-Pass PassB -Case '$dir'")) 'Missing Pass B Procmon or readiness instruction'
             $view=Get-CollectorView $entry $true $boot.AddMinutes(1)
             Assert-True ($view.Action -eq 'SaveDebugB' -and $view.ActiveB -and $view.NotesPass -eq 'PassB') 'Missing B capture routing'
             $b.EarlyDebugSavedUtc=$boot.AddMinutes(1).ToString('o'); $b|ConvertTo-Json|Set-Content $bp
@@ -132,6 +136,38 @@ try {
         }
     }
     if (!$Baseline) {
+        Test-Case 'Cold sign-in readiness requires a new paired scan while the console is held' {
+            $State = [pscustomobject]@{Scenario='Reboot';ComputerName=$env:COMPUTERNAME;RunId=('a'*32);Finished=$false;PreparationComplete=$true}
+            function Read-CollectionState { param($Pass,[switch]$RequireReboot) Assert-True $RequireReboot 'Boot validation skipped' }
+            function Assert-CaseTrace { param($Owner) Assert-True ($Owner -eq $State) 'Missing Pass A ownership check' }
+            $fixture = @{ Attempts=0; ConsoleReads=0; LoginAt=0; PairAt=2 }
+            function Get-CimInstance {
+                param($ClassName,$ErrorAction)
+                if ($ClassName -eq 'Win32_OperatingSystem') { return [pscustomobject]@{LastBootUpTime=$Start} }
+                $fixture.ConsoleReads++
+                $user = if ($fixture.LoginAt -and $fixture.ConsoleReads -ge $fixture.LoginAt) { 'fixture\user' }
+                [pscustomobject]@{UserName=$user}
+            }
+            function Get-FreshScanControl {
+                param($WaitSeconds)
+                $fixture.Attempts++
+                if ($fixture.Attempts -eq $fixture.PairAt) { [pscustomobject]@{Path='C:\fixture\unique.exe';EngineMicroseconds=462} }
+            }
+            Confirm-ColdSignInReady PassA
+            $result = Get-Content "$Case\Trend\PassA-Cold-signin-control.json" -Raw | ConvertFrom-Json
+            Assert-True ($result.Status -eq 'Observed' -and $result.RunId -eq $State.RunId -and $result.Pairs.Count -eq 1 -and $fixture.Attempts -eq 2) 'Missing fresh evidence or retry'
+            $fixture.Attempts=0; $fixture.PairAt=0
+            Assert-Throws { Confirm-ColdSignInReady PassA } 'Timeout released user'
+            $result = Get-Content "$Case\Trend\PassA-Cold-signin-control.json" -Raw | ConvertFrom-Json
+            Assert-True ($result.Status -eq 'Unverified' -and !$result.Pairs.Count -and $fixture.Attempts -eq 3) 'Stale proof or unbounded retries'
+            $fixture.Attempts=0; $fixture.PairAt=1; $fixture.ConsoleReads=0; $fixture.LoginAt=2
+            Assert-Throws { Confirm-ColdSignInReady PassB } 'User signed in during check'
+            $fixture.Attempts=0
+            Assert-Throws { Confirm-ColdSignInReady PassB } 'Active console accepted'
+            Assert-True ($fixture.Attempts -eq 0) 'Ran a probe after console sign-in'
+            $State.Scenario='SignOutSignIn'
+            Assert-Throws { Confirm-ColdSignInReady PassA } 'Wrong scenario accepted'
+        }
         Test-Case 'Pass B desktop buttons run the correct CLI stages in both finish and recovery workflows' {
             $ToolRoot=Join-Path $Root 'WpfTools'
             $null=New-Item -ItemType Directory $ToolRoot
