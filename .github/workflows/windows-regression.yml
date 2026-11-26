@@ -1,0 +1,34 @@
+name: Windows collector regression
+
+on:
+  pull_request:
+    paths:
+      - 'SWP-Perf.ps1'
+      - 'Developer/CollectionScript.Tests.ps1'
+      - '.github/workflows/windows-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Run Windows PowerShell 5.1 collector tests
+        shell: powershell
+        run: |
+          $kit = Join-Path $env:RUNNER_TEMP 'customer-kit'
+          Expand-Archive -LiteralPath 'dist/SWP-Customer-Kit.zip' -DestinationPath $kit
+          Copy-Item -LiteralPath SWP-Perf.ps1 -Destination $kit -Force
+          $results = Join-Path $env:RUNNER_TEMP 'collection-results'
+          & powershell.exe -NoProfile -STA -File Developer\CollectionScript.Tests.ps1 -SourcePath SWP-Perf.ps1 -VendorKitRoot $kit -LongPublicationTest -ResultsFolder $results
+          $result = $LASTEXITCODE
+          if (Test-Path "$results\Regression-results.json") {
+              $report = Get-Content "$results\Regression-results.json" -Raw | ConvertFrom-Json
+              Write-Host "Collector SHA-256 $($report.SourceSHA256)"
+              $report.Results | Group-Object Status | Select-Object Name,Count | Format-Table
+          }
+          exit $result

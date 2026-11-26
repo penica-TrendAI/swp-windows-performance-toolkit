@@ -409,7 +409,7 @@ function Register-MetricsTask {
 }
 
 function Copy-NewMetricBatches {
-    param([string]$Source,[string]$Destination,[datetime]$SinceUtc,[hashtable]$Copied)
+    param([string]$Source,[string]$Destination,[datetime]$SinceUtc,[hashtable]$Copied,[string]$LiveFolder)
     if (!(Test-Path -LiteralPath $Source -PathType Container)) { return }
     foreach ($f in (Get-RegularEvidenceFiles $Source)) {
         $rel = $f.FullName.Substring($Source.Length+1)
@@ -432,6 +432,10 @@ function Copy-NewMetricBatches {
             $records = @(Read-MetricsText ([IO.File]::ReadAllText($tmp)) $rel)
             if (!$records.Count) { continue }
             $hash = (Get-FileHash -LiteralPath $tmp).Hash
+            if ($LiveFolder) {
+                $liveFile = Join-Path $LiveFolder $rel
+                if ((Test-Path -LiteralPath $liveFile -PathType Leaf) -and (Get-FileHash -LiteralPath $liveFile).Hash -eq $hash) { continue }
+            }
             if (Test-Path -LiteralPath $target) {
                 if ((Get-FileHash -LiteralPath $target).Hash -ne $hash) {
                     $target = Join-Path $dir ($hash + '-' + $f.Name)
@@ -523,11 +527,12 @@ function Copy-ToolMetrics {
         finally { $Zip.Dispose() }
         $Copied += $Target
     }
+    $live = if ($State.RunId) { Join-Path $Case "Trend\LiveMetrics\$Pass\$($State.RunId)" }
     $Loose = Join-Path $ToolFolder 'DSA_Metrics'
     if (Test-Path -LiteralPath $Loose -PathType Container) {
         $looseTarget=Join-Path $Destination 'LooseMetrics'
         $null=New-Item -Path $looseTarget -ItemType Directory -Force
-        Copy-NewMetricBatches $Loose $looseTarget $SinceUtc @{}
+        Copy-NewMetricBatches $Loose $looseTarget $SinceUtc @{} $live
         $Copied += @(Get-RegularEvidenceFiles $looseTarget | Where-Object Name -like '*_jsonRecords.json' | Select-Object -ExpandProperty FullName)
     }
     if ($State.RunId) {
@@ -718,8 +723,9 @@ function Confirm-WarmScanControl {
 }
 
 function Save-SignInMilestones {
+    param([string]$PassName = 'PassA')
     $start = if ($State.Scenario -eq 'SignOutSignIn') { Parse-StateDateTime $State.ArmedAtUtc } else { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime }
-    $end = Parse-StateDateTime $State.TraceStopRequestedAtUtc
+    $end = if ($PassName -eq 'PassB') { Parse-StateDateTime $State.ReproductionEndUtc } else { Parse-StateDateTime $State.TraceStopRequestedAtUtc }
     $account = $State.AffectedUser
     $shells = @(Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object {
         $_.UserName -eq $account -and $_.StartTime.ToUniversalTime() -ge $start.ToUniversalTime() -and $_.StartTime.ToUniversalTime() -le $end.ToUniversalTime()
@@ -754,20 +760,26 @@ function Save-SignInMilestones {
     }
     $r = [ordered]@{Account=$account;AuthenticatedUtc=$null;ExplorerUtc=$null;Session=$null;SessionCorroborated=$sessionMatch;Logons=$logons;ExplorerCount=$shells.Count;TimeZone=(Get-TimeZone).Id}
     if($sessionMatch){$r.AuthenticatedUtc=$unique[0].Utc; $r.ExplorerUtc=$shells[0].StartTime.ToUniversalTime().ToString('o'); $r.Session=$shells[0].SessionId}
-    $r | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$Case\WPR\SignIn-milestones.json" -Encoding UTF8
+    $path = if ($PassName -eq 'PassB') { "$Case\Procmon\SignIn-milestones.json" } else { "$Case\WPR\SignIn-milestones.json" }
+    $r | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
 function Get-ScanCoverage {
-    param($Files,[datetime]$FromUtc,[datetime]$ToUtc)
+    param($Files,[datetime]$FromUtc,[datetime]$ToUtc,[string]$PassName='PassA')
     $unknown='Per-file AMSP scan timings during sign-in were not verified.'
     $r=[ordered]@{Status='Unverified';Message=$unknown;SignInPairs=$null;AfterSignInPairs=$null;CapturedPairs=0;CredentialToDesktopPairs=$null;AppWindows=@();FirstRecordLocal=$null;LastRecordLocal=$null;FirstPairLocal=$null;LastPairLocal=$null;UnmatchedStarts=0;UnmatchedEnds=0;Errors=@()}
     if($FromUtc -eq [datetime]::MinValue -or $ToUtc -eq [datetime]::MinValue){return [pscustomobject]$r}
     $fmt='yyyy/MM/dd HH:mm:ss.fff';$ci=[cultureinfo]::InvariantCulture
     try {
-        $mark=Get-Content -LiteralPath "$Case\WPR\SignIn-milestones.json" -Raw -ErrorAction Stop | ConvertFrom-Json
+        $markPath = if ($PassName -eq 'PassB') { "$Case\Procmon\SignIn-milestones.json" } else { "$Case\WPR\SignIn-milestones.json" }
+        $mark=Get-Content -LiteralPath $markPath -Raw -ErrorAction Stop | ConvertFrom-Json
         $tz=[TimeZoneInfo]::FindSystemTimeZoneById($mark.TimeZone)
         function LocalStamp($v){[TimeZoneInfo]::ConvertTimeFromUtc((Parse-StateDateTime $v).ToUniversalTime(),$tz).ToString($fmt,$ci)}
-        $paths=@($Files|Where-Object {$_.Name -like 'Amsp_LocalDebugLog*.log' -and $_.FullName.StartsWith("$Case\Trend\AMDebug\",[StringComparison]::OrdinalIgnoreCase)}|Sort-Object LastWriteTimeUtc|Select-Object -ExpandProperty FullName)
+        $debugRoot = "$Case\Trend\AMDebug\"
+        $paths=@($Files|Where-Object {
+            $_.Name -like 'Amsp_LocalDebugLog*.log' -and $_.FullName.StartsWith($debugRoot,[StringComparison]::OrdinalIgnoreCase) -and
+                (($_.FullName.Substring($debugRoot.Length) -like 'PassB-*') -eq ($PassName -eq 'PassB'))
+        }|Sort-Object LastWriteTimeUtc|Select-Object -ExpandProperty FullName)
         Initialize-ScanReader
         $reader=New-Object SwpScanReader
         $reader.Read([string[]]$paths,(LocalStamp $FromUtc.AddSeconds(-2)),(LocalStamp $ToUtc.AddMinutes(5)),$false)
@@ -785,7 +797,7 @@ function Get-ScanCoverage {
             if (!$rows.Count -and $r.AfterSignInPairs) {$r.Message='AMSP timed scans were recorded after Explorer started. Per-file timings during sign-in were not verified.'}
             if($rows.Count){$r.Status='Observed';$r.Message='Paired scans observed between authentication and Explorer.'}
         }
-        $notes=Get-Content -LiteralPath "$Case\Operator-notes.json" -Raw | ConvertFrom-Json
+        $notes=Get-Content -LiteralPath (Get-TimingNotesPath $Case $PassName) -Raw | ConvertFrom-Json
         if($notes.CredentialSubmittedAt -and $notes.DesktopReadyAt) {
             $lo=LocalStamp $notes.CredentialSubmittedAt;$hi=LocalStamp $notes.DesktopReadyAt
             $r.CredentialToDesktopPairs=@($reader.Pairs|Where-Object {$_.StartLocal -ge $lo -and $_.EndLocal -le $hi}).Count
@@ -794,9 +806,10 @@ function Get-ScanCoverage {
             $lo=LocalStamp $app.LaunchAt;$hi=LocalStamp $app.ReadyAt
             $r.AppWindows+=@([pscustomobject]@{Name=$app.Name;Pairs=@($reader.Pairs|Where-Object {$_.StartLocal -ge $lo -and $_.EndLocal -le $hi}).Count})
         }
+        $csv = if ($PassName -eq 'PassB') { "$Case\Trend\PassB-Timed-scans.csv" } else { "$Case\Trend\Timed-scans.csv" }
         $reader.Pairs | Select-Object StartLocal,EndLocal,Thread,Path,EngineMicroseconds,
             @{Name='EngineMilliseconds';Expression={$_.EngineMicroseconds/1000.0}},
-            @{Name='InAuthenticatedSignIn';Expression={if($authStart -and $shellStart){$_.StartLocal -ge $authStart -and $_.EndLocal -le $shellStart}}} | Export-Csv "$Case\Trend\Timed-scans.csv" -NoTypeInformation -Encoding UTF8
+            @{Name='InAuthenticatedSignIn';Expression={if($authStart -and $shellStart){$_.StartLocal -ge $authStart -and $_.EndLocal -le $shellStart}}} | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8
     } catch { $r.Errors+= $_.Exception.Message }
     [pscustomobject]$r
 }
@@ -837,9 +850,15 @@ function Start-EarlySnapshot {
     Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "{0}" -Stage SaveDebug -Pass PassA -Case "{1}"' -f $installed,$Case) -PassThru -NoNewWindow -RedirectStandardOutput "$Case\WPR\Early-copy-output.txt" -RedirectStandardError "$Case\WPR\Early-copy-error.txt"
 }
 
+function Get-TimingNotesPath {
+    param([string]$CasePath, [string]$PassName)
+    if ($PassName -eq 'PassB') { return (Join-Path $CasePath 'Procmon\Operator-notes.json') }
+    Join-Path $CasePath 'Operator-notes.json'
+}
+
 function Get-OperatorNotesAssessment {
-    param([datetime]$WindowStartUtc=[datetime]::MinValue, [datetime]$WindowEndUtc=[datetime]::MinValue)
-    $Path = Join-Path $Case 'Operator-notes.json'
+    param([datetime]$WindowStartUtc=[datetime]::MinValue, [datetime]$WindowEndUtc=[datetime]::MinValue, [string]$PassName='PassA')
+    $Path = Get-TimingNotesPath $Case $PassName
     $Missing = @()
     try {
         $Notes = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json
@@ -863,11 +882,83 @@ function Get-OperatorNotesAssessment {
             $Ready = [datetimeoffset]::Parse($App.ReadyAt,[Globalization.CultureInfo]::InvariantCulture)
             if ($Ready -lt $Launch) { $Missing += "Application $($App.Name): ready precedes launch" }
             if (($WindowStartUtc -ne [datetime]::MinValue -and $Launch.UtcDateTime -lt $WindowStartUtc.AddSeconds(-1)) -or
-                ($WindowEndUtc -ne [datetime]::MinValue -and $Ready.UtcDateTime -gt $WindowEndUtc.AddSeconds(1))) { $Missing += "Application $($App.Name): timing is outside the recorded Pass A reproduction window" }
+                ($WindowEndUtc -ne [datetime]::MinValue -and $Ready.UtcDateTime -gt $WindowEndUtc.AddSeconds(1))) { $Missing += "Application $($App.Name): timing is outside the recorded $PassName reproduction window" }
         }
         if ($Notes.CredentialSubmittedAt -and $Notes.DesktopReadyAt -and [datetimeoffset]::Parse($Notes.DesktopReadyAt) -lt [datetimeoffset]::Parse($Notes.CredentialSubmittedAt)) { $Missing += 'Desktop ready precedes credential submission' }
     } catch { $Missing += "Structured timing notes unavailable or invalid: $($_.Exception.Message)" }
     [pscustomobject]@{ Status=$(if ($Missing.Count) { 'Incomplete' } else { 'Filled' }); MissingFields=@($Missing); Path=$Path }
+}
+
+function Get-PmlEvidenceGaps {
+    param([string]$Folder, [string]$RunId)
+    $manifest = Join-Path $Folder 'PassB-segments.csv'
+    if (!(Test-Path -LiteralPath $manifest -PathType Leaf)) { return 'Pass B Procmon segment inventory is missing. The saved capture cannot be verified.' }
+    try {
+        $segments = @(Import-Csv -LiteralPath $manifest)
+        if (!$segments.Count) { return 'Pass B Procmon inventory contains no segments.' }
+        $names = @{}
+        foreach ($segment in $segments) {
+            if (!$segment.Name -or [IO.Path]::GetFileName($segment.Name) -ne $segment.Name -or
+                $segment.Name -notlike '*.pml' -or $segment.SHA256 -notmatch '^[a-f0-9]{64}$' -or
+                $names.ContainsKey($segment.Name) -or ($RunId -and $segment.RunId -ne $RunId)) { throw 'Invalid segment identity.' }
+            $names[$segment.Name] = $true
+            $path = Assert-LocalEvidencePath (Join-Path $Folder $segment.Name)
+            $file = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+            if (!$file -or $file.Length -ne [long]$segment.Bytes -or $file.Length -le 0 -or
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $segment.SHA256) {
+                "Pass B Procmon segment missing or changed: $($segment.Name)"
+            }
+        }
+        foreach ($file in (Get-ChildItem -LiteralPath $Folder -File -Filter '*.pml')) {
+            if (!$names.ContainsKey($file.Name)) { "Pass B Procmon segment outside the finish inventory: $($file.Name)" }
+        }
+    } catch { "Pass B Procmon inventory could not be verified: $($_.Exception.Message)" }
+}
+
+function Export-PassEvents {
+    param([string]$Folder)
+    $items = foreach ($channel in (@('System','Application') + $Channels | Where-Object { $_ } | Select-Object -Unique)) {
+        $status = 'Failed'; $detail = ''; $size = 0
+        $target = Join-Path $Folder (($channel -replace '[/\\]', '-') + '.evtx')
+        try {
+            $output = & wevtutil.exe epl $channel $target /ow:true 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ($output -join ' ') }
+            $size = (Get-Item -LiteralPath $target -ErrorAction Stop).Length
+            if (!$size) { throw 'Empty export.' }
+            $status = 'Exported'
+        } catch {
+            $detail = $_.Exception.Message
+            try { $null = Get-WinEvent -ListLog $channel -ErrorAction Stop }
+            catch {
+                if ($_.FullyQualifiedErrorId -like 'NoMatchingLogsFound*' -or $_.Exception -is [System.Diagnostics.Eventing.Reader.EventLogNotFoundException]) { $status = 'Unavailable' }
+            }
+        }
+        [pscustomobject]@{Channel=$channel;Status=$status;Bytes=$size;Detail=$detail}
+    }
+    $items | Export-Csv -LiteralPath (Join-Path $Folder 'Channel-exports.csv') -NoTypeInformation -Encoding UTF8
+}
+
+function Get-EventEvidenceGaps {
+    param([string]$Folder, [string]$PassName)
+    $manifest = Join-Path $Folder 'Channel-exports.csv'
+    $legacyError = Get-Item -LiteralPath (Join-Path $Folder 'Export-errors.txt') -ErrorAction SilentlyContinue
+    if ($legacyError -and $legacyError.Length) { "$PassName recorded event-export errors. Review the saved Export-errors.txt." }
+    if (!(Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        "$PassName event export manifest missing. Individual channel results are unverified."
+        return
+    }
+    try {
+        $entries = @(Import-Csv -LiteralPath $manifest)
+        foreach ($channel in (@('System','Application') + $Channels | Where-Object { $_ } | Select-Object -Unique)) {
+            $row = @($entries | Where-Object Channel -eq $channel)
+            if ($row.Count -ne 1) { "$PassName missing or ambiguous event export result: $channel"; continue }
+            if ($row[0].Status -eq 'Unavailable' -and $channel -notin 'Application','System') { continue }
+            $file = Get-Item -LiteralPath (Join-Path $Folder (($channel -replace '[/\\]', '-') + '.evtx')) -ErrorAction SilentlyContinue
+            if ($row[0].Status -ne 'Exported' -or !$file -or !$file.Length -or $file.Length -ne [long]$row[0].Bytes) {
+                "$PassName event export failed, missing or changed: $channel ($($row[0].Status))."
+            }
+        }
+    } catch { "$PassName event export manifest is unreadable: $($_.Exception.Message)" }
 }
 
 function Get-CaseEvidenceAssessment {
@@ -925,6 +1016,16 @@ function Get-CaseEvidenceAssessment {
         }
         $MetricResults += $Metrics
         foreach ($Gap in $Metrics.EvidenceGaps) { $Gaps.Add("$PassName metrics: $Gap") }
+        $eventFolder = if ($PassName -eq 'PassA') { "$Case\Events" } else { "$Case\Events\PassB" }
+        foreach ($gap in (Get-EventEvidenceGaps $eventFolder $PassName)) { $Gaps.Add($gap) }
+        if ($PassName -eq 'PassB') {
+            foreach ($gap in (Get-PmlEvidenceGaps "$Case\Procmon" $Phase.RunId)) { $Gaps.Add($gap) }
+            if (!$Phase.Finished) { $Gaps.Add('Pass B has not finished.') }
+            $bScan = Get-ScanCoverage $CaseFiles $Start $End 'PassB'
+            $bNotes = Get-OperatorNotesAssessment $Start $End 'PassB'
+            if ($bScan.Status -ne 'Observed' -or $bScan.Errors.Count) { $Gaps.Add("Pass B scan coverage: $($bScan.Message) Review the Pass B milestones and inputs.") }
+            if ($bNotes.Status -ne 'Filled') { $Gaps.Add('Pass B operator notes: ' + ($bNotes.MissingFields -join '; ')) }
+        }
     }
     $NotesStart = if ($MetricResults[0].WindowStartUtc) { (Parse-StateDateTime $MetricResults[0].WindowStartUtc).ToUniversalTime() } else { [datetime]::MinValue }
     $NotesEnd = if ($MetricResults[0].RequiredEndUtc) { (Parse-StateDateTime $MetricResults[0].RequiredEndUtc).ToUniversalTime() } else { [datetime]::MinValue }
@@ -989,7 +1090,7 @@ function Get-CaseEvidenceAssessment {
     if (-not @($Context | Where-Object Kind -eq 'PolicyExport').Count) { $Gaps.Add('No effective policy/exclusion-list console exports verified. GetConfiguration.xml list names do not supply their members.') }
     [pscustomobject]@{
         AssessedAt=(Get-Date -Format o); Status=$(if ($Gaps.Count) { 'EvidenceGapsRemain' } else { 'RequiredArtifactsVerified' })
-        SignInScans=$scan; Metrics=$MetricResults[0]; MetricsByPass=$MetricResults; Wpr=$Quality; OperatorNotes=$Notes; EvidenceGaps=@($Gaps.ToArray())
+        SignInScans=$scan; PassBSignInScans=$bScan; Metrics=$MetricResults[0]; MetricsByPass=$MetricResults; Wpr=$Quality; OperatorNotes=$Notes; PassBOperatorNotes=$bNotes; EvidenceGaps=@($Gaps.ToArray())
         Interpretation='Artifact checks do not establish a root cause, validate boot markers, confirm console/self-protection state, or confirm that exports include every effective exclusion-list member.'
     }
 }
@@ -1060,6 +1161,16 @@ function Save-AMDebug {
     if(Test-Path -LiteralPath $diag -PathType Container){
         & robocopy.exe $diag "$Dest\AgentLogs\diag" 'ds_agent*.log' /COPY:DAT /R:1 /W:1 /XJ /NP "/LOG:$Dest\Agent-diag-copy.log"
         if($LASTEXITCODE -ge 8){throw "Diagnostic agent log copy failed: $Dest\Agent-diag-copy.log"}
+    }
+    $counts = foreach ($folder in $AgentLogs,$diag) {
+        $copied = if ($folder -eq $diag) { "$Dest\AgentLogs\diag" } else { "$Dest\AgentLogs" }
+        $matches = @(Get-ChildItem -LiteralPath $folder -File -Filter 'ds_agent*.log' -ErrorAction SilentlyContinue)
+        $saved = @(Get-ChildItem -LiteralPath $copied -File -Filter 'ds_agent*.log' -ErrorAction SilentlyContinue)
+        [pscustomobject]@{Source=$folder;Matched=$matches.Count;Copied=$saved.Count;NewestFileUtc=($saved | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty LastWriteTimeUtc)}
+    }
+    $counts | Export-Csv -LiteralPath "$Dest\Agent-log-sources.csv" -NoTypeInformation -Encoding UTF8
+    if (!(($counts | Measure-Object -Property Copied -Sum).Sum)) {
+        'No general ds_agent logs copied from the agent or its diag folder.' | Set-Content -LiteralPath "$Dest\Collection-errors.txt"
     }
     Get-Date -Format o | Out-File "$Dest\Snapshot-time.txt"
 }
@@ -1264,6 +1375,7 @@ function Read-CollectionState {
     if ($RequireReboot -and $State.Scenario -ne 'SignOutSignIn') {
         $Boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
         if ($Boot -le (Parse-StateDateTime $State.PreparedBoot).ToUniversalTime()) { throw 'The prepared pass has not been rebooted yet.' }
+        if ($Pass -eq 'PassB') { Assert-PassBBoot $Boot }
     }
 }
 function Assert-CollectorsStopped {
@@ -1616,6 +1728,9 @@ function New-CaseArchive {
 function Invoke-PrepareB {
     Read-CollectionState -Pass 'PassA'
     if (-not $State.Finished) { throw 'Finish Phase A before the optional Procmon repeat.' }
+    if ($State.ConfigRestored -or (Test-Path -LiteralPath "$Case\Cleanup\Collector-closed.json")) { throw 'This case has already been cleaned up. Prepare a new case.' }
+    if (!$State.ConfigAppliedHash -or (Get-FileHash -LiteralPath $ConfigPath).Hash -ne $State.ConfigAppliedHash) { throw 'The installed DSA metrics configuration differs from the prepared case.' }
+    if (Test-DiagnosticPending $Case) { throw 'Resume the pending agent diagnostic before preparing Pass B.' }
     Assert-CollectorsStopped
     $script:Wpr = Get-WprPath
     $SessionOutput = & logman.exe query -ets 2>&1 | Out-String
@@ -1624,7 +1739,12 @@ function Invoke-PrepareB {
     if (Test-Path -LiteralPath $BState) { throw 'Pass B already prepared. Preserve it; do not overwrite its state.' }
     $Config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     if ($Config.Metrics.collectMetrics -ne 1 -or $Config.Metrics.MetricsIntervalInSecond -ne 5 -or $Config.Metrics.MetricsDurationInSecond -ne 900 -or $Config.Tool.PressKeyToEnd -ne 0) { throw 'Metrics JSON no longer matches the five-second/900-second plan.' }
+    $phaseA = $State
+    $task = Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction Stop
+    if (!(Test-MetricsTaskAction $task $phaseA $Case PassA) -or $task.State -ne 'Disabled') { throw 'Expected the disabled, case-owned Pass A metrics task.' }
     $TraceFolder = Join-Path $Case 'Cleanup\PersistentAMTrace'
+    $notesPath = Get-TimingNotesPath $Case 'PassB'
+    if (Test-Path -LiteralPath $notesPath) { throw 'Pass B already has timing notes. Review the case before preparing.' }
     if (Test-Path -LiteralPath $TraceFolder) {
         $Old = Get-Content "$TraceFolder\State.json" -Raw | ConvertFrom-Json
         if ($Old.Restored -ne $true) { throw 'Restore Phase A INI before preparing Pass B.' }
@@ -1634,10 +1754,12 @@ function Invoke-PrepareB {
     $script:State = [pscustomobject]@{
         PreparedAt=(Get-Date -Format o)
         PreparedBoot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
-        AmspDebug=$AmspDebug; Finished=$false; RunId=[guid]::NewGuid().ToString('N')
+        AmspDebug=$AmspDebug; Finished=$false; PreparationComplete=$false; AffectedUser=$phaseA.AffectedUser; RunId=[guid]::NewGuid().ToString('N')
         ComputerName=$env:COMPUTERNAME; ConfigAppliedHash=(Get-FileHash -LiteralPath $ConfigPath).Hash; Scenario='Reboot' 
     }
     Save-State
+    [pscustomobject]@{CredentialSubmittedAt='';DesktopReadyAt='';Applications=@([pscustomobject]@{Name='';LaunchAt='';ReadyAt='';Symptom=''})} |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $notesPath -Encoding UTF8
     $EnableTime = (Get-Date).ToUniversalTime()
     Enable-PersistentAMTrace -Case $Case
     $DebugDeadline = (Get-Date).AddSeconds(60)
@@ -1648,11 +1770,12 @@ function Invoke-PrepareB {
     } while ((Get-Date) -lt $DebugDeadline)
     if (-not $DebugLog -or $DebugLog.LastWriteTimeUtc -lt $EnableTime -or $DebugLog.Length -eq 0) { throw 'Pass B fresh AM debug output not verified. Resolve before reboot, or use RestoreTrace.' }
     @(Get-OriginalDebugValues) | ConvertTo-Json | Set-Content -LiteralPath "$Case\Cleanup\PersistentAMTrace\Registry-applied.json" -Encoding UTF8
-    $phaseA=Get-Content -LiteralPath "$Case\Cleanup\PhaseA-state.json" -Raw|ConvertFrom-Json
-    $task=Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\'
-    if (!(Test-MetricsTaskAction $task $phaseA $Case PassA) -or $task.State -ne 'Disabled') { throw 'Unexpected Phase A task before Pass B.' }
+    $task=Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction Stop
+    if (!(Test-MetricsTaskAction $task $phaseA $Case PassA) -or $task.State -ne 'Disabled') { throw 'The Pass A task changed during preparation. Review recovery status.' }
     Unregister-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -Confirm:$false
     Register-MetricsTask PassB
+    $State.PreparationComplete = $true
+    Save-State
     Write-Host 'Pass B prepared for metrics and persistent AM logging. WPR is not armed.'
     Write-Host 'MANUAL: Open Procmon as administrator, stop live capture, enable Options > Enable Boot Logging (no thread profiling), and close it.'
     Write-Host 'Reboot, repeat login/apps, then open Procmon, save ALL PML segments under Case\Procmon, disable boot logging and exit.'
@@ -1896,6 +2019,9 @@ $policy = ''; if (!(Get-ExecutionPolicy -List | Where-Object { $_.ExecutionPolic
 
 function Get-CollectorView {
     param($Entry, [bool]$Installed, [datetime]$BootUtc)
+    $prepareB = $false
+    $activeB = $false
+    $notesPass = 'PassA'
     $action = 'Prepare'
     $title = 'Ready for a new capture'
     $message = 'Choose the sign-in scenario and confirm the affected account. Record the baseline and verify agent self-protection with the policy owner before preparing.'
@@ -1911,19 +2037,34 @@ function Get-CollectorView {
         $restoreDue = $phase.Finished -and (Test-Path -LiteralPath $traceFile) -and
             (Get-Content -LiteralPath $traceFile -Raw | ConvertFrom-Json).Restored -ne $true
         if ($receipt) {
-            foreach ($updated in 'Operator-notes.json','Test-notes.txt','Cleanup\PhaseB-state.json','Trend\FinalDiagnostics\Last-diagnostic-status.json',$traceFile) {
+            foreach ($updated in 'Operator-notes.json','Procmon\Operator-notes.json','Test-notes.txt','Cleanup\PhaseB-state.json','Trend\FinalDiagnostics\Last-diagnostic-status.json',$traceFile) {
                 $file = if ([IO.Path]::IsPathRooted($updated)) { $updated } else { Join-Path $dir $updated }
                 $item = Get-Item -LiteralPath $file -ErrorAction SilentlyContinue
                 if ($item -and $item.LastWriteTimeUtc -gt $receipt.LastWriteTimeUtc) { $receipt = $null; break }
             }
         }
         $b = Join-Path $dir 'Cleanup\PhaseB-state.json'
+        $phaseB = if (Test-Path -LiteralPath $b) { Get-Content -LiteralPath $b -Raw | ConvertFrom-Json }
+        if ($phaseB) { $notesPass = 'PassB' }
+        $activeB = $Entry.Open -and $phaseB -and !$phaseB.Finished
+        $prepareB = $Entry.Open -and $phase.Finished -and !$phaseB -and !$restoreDue -and !$diagnostic
         $quality = Join-Path $dir 'WPR\Trace-quality.json'
         if ($diagnostic) {
             $action = 'Diagnostics'; $title = 'Native diagnostic pending'; $message = 'Wait for the previous monitor to exit, then resume the named archive. Review the result before packaging.'
-        } elseif ((Test-Path -LiteralPath $b) -and !(Get-Content -LiteralPath $b -Raw | ConvertFrom-Json).Finished -and $Entry.Open) {
-            $action = 'FinishB'; $title = 'Optional Procmon pass'
-            $message = 'After reproduction, save every PML segment, disable Procmon boot logging and close Procmon. Use Finish B, then Package.'
+        } elseif ($activeB) {
+            $title = 'Pass B - Procmon boot capture'
+            if ($phaseB.PreparationComplete -eq $false) {
+                $action = 'Review'; $message = 'Pass B preparation was interrupted. Review status and use Recover Pass B to preserve the available evidence.'
+            } elseif ($BootUtc -le (Parse-StateDateTime $phaseB.PreparedBoot).ToUniversalTime()) {
+                $action = 'Instructions'
+                $message = 'Open Microsoft Process Monitor as administrator. Stop live capture, enable Options > Enable Boot Logging without thread profiling, then exit Procmon. Restart, sign in and repeat the agreed launches. Reopen this collector when the symptom ends.'
+            } elseif (!$phaseB.EarlyDebugSavedUtc) {
+                $action = 'SaveDebugB'
+                $message = 'As soon as the agreed sign-in or app delay ends, save the early Trend logs. Then open Procmon to save the boot capture.'
+            } else {
+                $action = 'FinishB'
+                $message = "Open Procmon as administrator. Save all PML segments to $dir\Procmon, turn off boot logging and exit Procmon. Enter the Pass B timing notes, then choose Finish B."
+            }
         } elseif ($restoreDue) {
             $action = 'RestoreTrace'; $title = 'Restore trace settings'
             $message = 'The diagnostic has ended. Restore the saved agent trace settings and then package the case.'
@@ -1952,7 +2093,8 @@ function Get-CollectorView {
             $message = 'After the agreed sign-in and application milestone, stop the trace immediately. For a sign-out test, fully sign out and sign back in first.'
         }
     }
-    [pscustomobject]@{ Action=$action; Title=$title; Message=$message }
+    if ($prepareB) { $message += ' If support requested a Procmon repeat, choose Prepare Pass B in the action list before cleanup.' }
+    [pscustomobject]@{ Action=$action; Title=$title; Message=$message; CanPrepareB=$prepareB; ActiveB=$activeB; NotesPass=$notesPass }
 }
 
 function New-CollectorWindow {
@@ -1990,18 +2132,24 @@ function New-CollectorWindow {
     try { [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
 }
 
+function Confirm-CollectorAction {
+    param($Window, [string]$Message, [string]$Title)
+    [Windows.MessageBox]::Show($Window,$Message,$Title,'YesNo','Question','No') -eq 'Yes'
+}
+
 function Show-CollectorWindow {
-    param([string]$RequestedCase)
+    param([string]$RequestedCase, [string]$SourcePath = $PSCommandPath)
     $window = New-CollectorWindow
     $controls = @{}
     foreach ($name in 'Title','Identity','CasePath','Instruction','Setup','Scenario','Affected','Primary','Notes','Refresh','Other','RunOther','ProgressLabel','Output') {
         $controls[$name] = $window.FindName($name)
     }
-    $ui = @{ Job=$null; Script=$PSCommandPath; Case=$null; Action=$null; Requested=$RequestedCase }
+    $ui = @{ Job=$null; Script=$SourcePath; Case=$null; Action=$null; Requested=$RequestedCase }
     $labels = [ordered]@{
         InstallTools='Install tools'; Prepare='Prepare new capture'; Instructions='View reproduction instructions'
         StopTrace='Stop trace now'; FinishAndPackage='Finish and package'; Package='Package case'; OpenHandoff='Open handoff folder'
         Review='Review recovery status'; Status='Show status'; Diagnostics='Resume or request diagnostic'; FinishB='Finish B'
+        PrepareB='Prepare Pass B'; SaveDebugB='Save Pass B early logs'; RecoverB='Recover Pass B and package'
         RecoverAndPackage='Recover and package'; RestoreTrace='Restore trace settings'; Restore='Restore settings and keep evidence'
         Delete='Delete all local cases'
     }
@@ -2040,6 +2188,7 @@ function Show-CollectorWindow {
             if (!$installed -and $entry) { throw 'This case is active under another installation. Open the installed collector that prepared the case.' }
             $view = Get-CollectorView $entry $installed $boot
             $ui.Action = $view.Action
+            $ui.NotesPass = $view.NotesPass
             $controls.Title.Text = $view.Title
             $controls.Instruction.Text = $view.Message
             $controls.Identity.Text = "Administrator: $admin"
@@ -2049,11 +2198,16 @@ function Show-CollectorWindow {
             if ($view.Action -eq 'Prepare') { $controls.Setup.Visibility = 'Visible' }
             $controls.Primary.Content = $labels[$view.Action]
             $controls.Primary.IsEnabled = $true
-            $controls.Notes.IsEnabled = $ui.Case -and (Test-Path -LiteralPath (Join-Path $ui.Case 'Operator-notes.json'))
+            $controls.Notes.Content = if ($view.NotesPass -eq 'PassB') { 'Open Pass B timing notes' } else { 'Open timing notes' }
+            $controls.Notes.IsEnabled = $ui.Case -and (Test-Path -LiteralPath (Get-TimingNotesPath $ui.Case $view.NotesPass))
             $choices = @('Status')
             if ($entry) {
-                if ($entry.Phase.TraceSaved -or $entry.Phase.Finished) { $choices += 'Package','Diagnostics' }
-                if ($entry.Open) { $choices += 'RecoverAndPackage','RestoreTrace' }
+                if ($view.CanPrepareB) { $choices += 'PrepareB' }
+                if ($view.ActiveB) { $choices += 'RecoverB' }
+                else {
+                    if ($entry.Phase.TraceSaved -or $entry.Phase.Finished) { $choices += 'Package','Diagnostics' }
+                    if ($entry.Open) { $choices += 'RecoverAndPackage','RestoreTrace' }
+                }
             }
             if ($known.Count) { $choices += 'Restore','Delete' }
             foreach ($choice in $choices) { [void]$controls.Other.Items.Add($labels[$choice]) }
@@ -2089,8 +2243,14 @@ function Show-CollectorWindow {
                     $argsForStage.Scenario = $controls.Scenario.SelectedItem.Content
                 }
                 'Review' { $action = 'Status' }
-                'RecoverAndPackage' {
-                    if ([Windows.MessageBox]::Show($window,'Preserve a partial capture and begin recovery now?','Recover evidence','YesNo','Question','No') -ne 'Yes') { return }
+                'PrepareB' {
+                    if (!(Confirm-CollectorAction $window 'Prepare the optional repeat on this case? Have Microsoft Process Monitor available and confirm the recorded self-protection settings with the policy owner.' 'Prepare Pass B')) { return }
+                }
+                'SaveDebugB' { $argsForStage.Pass = 'PassB'; $action = 'SaveDebug' }
+                { $_ -in 'RecoverAndPackage','RecoverB' } {
+                    $argsForStage.Pass = if ($action -eq 'RecoverB') { 'PassB' } else { 'PassA' }
+                    if (!(Confirm-CollectorAction $window "Preserve a partial $($argsForStage.Pass) capture and begin recovery now?" 'Recover evidence')) { return }
+                    $action = 'RecoverAndPackage'
                 }
                 'Restore' {
                     if ([Windows.MessageBox]::Show($window,'Restore settings for all cases and keep their files? This can end an unfinished recording.','Restore collection settings','YesNo','Question','No') -ne 'Yes') { return }
@@ -2139,7 +2299,7 @@ function Show-CollectorWindow {
     $controls.Refresh.Add_Click({ & $refresh })
     $controls.Notes.Add_Click({
         try {
-            $path = Assert-LocalEvidencePath (Join-Path $ui.Case 'Operator-notes.json')
+            $path = Assert-LocalEvidencePath (Get-TimingNotesPath $ui.Case $ui.NotesPass)
             Start-Process -FilePath "$env:SystemRoot\System32\notepad.exe" -ArgumentList ('"{0}"' -f $path)
         } catch { & $append $_.Exception.Message }
     })
@@ -2333,21 +2493,53 @@ function Invoke-StopTrace {
     return
 }
 
+function Assert-PassBBoot {
+    param([datetime]$BootUtc)
+    $marker = Join-Path $Case "Trend\LiveMetrics\PassB\$($State.RunId)\BootUtc.txt"
+    if (Test-Path -LiteralPath $marker) {
+        $saved = Parse-StateDateTime (Get-Content -LiteralPath $marker -Raw).Trim()
+        if ($saved.ToUniversalTime() -ne $BootUtc) { throw 'A different restart owns the Pass B metrics task. Recover available evidence.' }
+    } else {
+        $prepared = (Parse-StateDateTime $State.PreparedAt).ToLocalTime()
+        $boots = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-General';Id=12;StartTime=$prepared} -ErrorAction SilentlyContinue)
+        if ($boots.Count -ne 1 -or [math]::Abs(($boots[0].TimeCreated.ToUniversalTime() - $BootUtc).TotalSeconds) -gt 30) {
+            throw 'The Pass B restart is unverified. Retry after the startup task or System boot event appears, or recover partial evidence.'
+        }
+    }
+    if ($State.RecordedBootUtc -and (Parse-StateDateTime $State.RecordedBootUtc).ToUniversalTime() -ne $BootUtc) { throw 'The recorded Pass B boot differs from this restart.' }
+}
+
+function Set-PassBReproductionEnd {
+    $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+    if ($boot -le (Parse-StateDateTime $State.PreparedBoot).ToUniversalTime()) { return }
+    if (!$State.ReproductionEndUtc) {
+        $State | Add-Member -NotePropertyName RecordedBootUtc -NotePropertyValue ($boot.ToString('o')) -Force
+        $State | Add-Member -NotePropertyName ReproductionEndUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+        Save-State
+    }
+    if ($State.RecordedBootUtc -and $boot -eq (Parse-StateDateTime $State.RecordedBootUtc).ToUniversalTime()) {
+        try { Save-SignInMilestones -PassName PassB } catch { $_.Exception.Message | Out-File "$Case\Procmon\SignIn-milestone-error.txt" }
+    }
+}
+
 function Invoke-Finish {
     param([string]$Pass = 'PassA',[switch]$Recovery)
     Read-CollectionState -Pass $Pass -RequireReboot:(-not $Recovery)
+    if ($State.Finished -and !$Recovery) { Write-Host "$Pass already finished. Use Package for the handoff."; return }
     if ($Pass -eq 'PassB') {
         if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^procmon(64|64a)?$' }) { throw 'Save the PML, disable Procmon boot logging and exit Procmon before FinishB.' }
+        if (!$Recovery -and $State.PreparationComplete -eq $false) { throw 'Pass B preparation was interrupted. Use RecoverAndPackage -Pass PassB.' }
         $Pml = @(Get-ChildItem -LiteralPath "$Case\Procmon" -Filter '*.pml' -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 -and $_.LastWriteTimeUtc -ge (Parse-StateDateTime $State.PreparedAt).ToUniversalTime() })
-        if (-not $Pml.Count) { throw 'No saved PML found. Save the Procmon boot capture before FinishB.' }
+        if (!$Pml.Count -and !$Recovery) { throw 'No saved PML found. Save the Procmon boot capture before FinishB, or recover available evidence.' }
+        if ($Recovery) {
+            try {
+                $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+                Assert-PassBBoot $boot
+                Set-PassBReproductionEnd
+            } catch { Write-Warning "Pass B sign-in window unverified: $($_.Exception.Message)" }
+        } else { Set-PassBReproductionEnd }
     }
-if ($Pass -eq 'PassB' -and -not $State.ReproductionEndUtc) {
-    $State | Add-Member -NotePropertyName ReproductionEndUtc -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o')) -Force
-    $State | Add-Member -NotePropertyName RecordedBootUtc -NotePropertyValue ((Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')) -Force
-    Save-State
-}
 if (!$Recovery -and $Pass -eq 'PassA' -and -not $State.TraceSaved) { throw 'Run -Stage StopTrace immediately after the measured reproduction first.' }
-if ($State.Finished -and !$Recovery) { Write-Host "$Pass already finished. Use -Stage Diagnostics to request another diagnostic or -Stage Package to package."; return }
 $Deadline = (Get-Date).AddMinutes(46)
 do {
     $Task = Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction SilentlyContinue
@@ -2357,7 +2549,12 @@ do {
     if ((Get-Date) -ge $Deadline) { throw 'Task remains running beyond the wait limit. Preserve its state; investigate before copying/restoring.' }
     Start-Sleep -Seconds 30
 } while ($true)
-if ($Task -and !(Test-MetricsTaskAction $Task $State $Case $Pass)) { throw 'Unrecognized scheduled task. Preserve its state.' }
+if ($Task -and !(Test-MetricsTaskAction $Task $State $Case $Pass)) {
+    $phaseA = Get-Content -LiteralPath "$Case\Cleanup\PhaseA-state.json" -Raw | ConvertFrom-Json
+    if ($Pass -eq 'PassB' -and $Recovery -and $Task.State -eq 'Disabled' -and (Test-MetricsTaskAction $Task $phaseA $Case PassA)) {
+        $Task = $null
+    } else { throw 'Unrecognized scheduled task. Preserve its state.' }
+}
 $PassFolder = "$Case\Trend\$Pass"
 if (Test-Path $PassFolder) {
     $PassFolder = "$Case\Trend\$Pass-Retry-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
@@ -2377,16 +2574,41 @@ try {
             if ($Info.LastTaskResult -ne 0) { "DSA task result: $($Info.LastTaskResult)" | Add-Content "$PassFolder\Collection-errors.txt" }
         }catch { $_ | Out-String | Add-Content "$PassFolder\Collection-errors.txt" }
     } else { 'DSA task was absent.' | Add-Content "$PassFolder\Collection-errors.txt" }
-    if ($Recovery) { 'Recovery handoff. WPR and other gaps require review.' | Add-Content "$PassFolder\Collection-errors.txt" }
+    if ($Recovery) { "Recovery handoff for $Pass. Review incomplete or missing evidence." | Add-Content "$PassFolder\Collection-errors.txt" }
+    if ($Pass -eq 'PassB' -and $Pml.Count) {
+        $manifest = "$Case\Procmon\PassB-segments.csv"
+        if (!(Test-Path -LiteralPath $manifest)) {
+            try {
+                $segments = foreach ($file in $Pml) {
+                    $path = Assert-LocalEvidencePath $file.FullName
+                    [pscustomobject]@{RunId=$State.RunId;Name=$file.Name;Bytes=$file.Length;SHA256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+                }
+                $segments | Export-Csv -LiteralPath "$manifest.tmp" -NoTypeInformation -Encoding UTF8
+                [IO.File]::Move("$manifest.tmp",$manifest)
+            } catch { "PML inventory failed: $_" | Add-Content "$PassFolder\Collection-errors.txt" }
+        }
+    }
     try {
         $snapshot = New-Item -Path "$PassFolder\SupportToolSnapshot" -ItemType Directory -Force
-        foreach ($name in 'DSTool.json','logs\DSA_SupportTool.log','logs\GetConfiguration.xml') {
+        foreach ($name in 'DSTool.json','logs\GetConfiguration.xml') {
             $file = Join-Path $ToolFolder $name
             if(Test-Path -LiteralPath $file) {Copy-Item -LiteralPath $file -Destination $snapshot.FullName}
         }
+        $supportLog = Join-Path $ToolFolder 'logs\DSA_SupportTool.log'
+        if (Test-Path -LiteralPath $supportLog) {
+            $from = (Parse-StateDateTime $State.PreparedAt).ToLocalTime()
+            $include = $false
+            Get-Content -LiteralPath $supportLog | ForEach-Object {
+                if ($_ -match '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})') {
+                    $stamp = [datetime]::ParseExact($Matches[1],'yyyy-MM-dd HH:mm:ss,fff',[cultureinfo]::InvariantCulture)
+                    $include = $stamp -ge $from
+                }
+                if ($include) { $_ }
+            } | Out-File -LiteralPath (Join-Path $snapshot.FullName 'DSA_SupportTool.log') -Encoding utf8
+        }
     }
     catch { $_ | Out-String | Add-Content -LiteralPath "$PassFolder\Collection-errors.txt"; Write-Warning "Tool snapshot failed: $_" }
-    $Since = if ($State.Scenario -eq 'SignOutSignIn' -and $State.ArmedAtUtc) {(Parse-StateDateTime $State.ArmedAtUtc).ToUniversalTime()} elseif ($State.RecordedBootUtc) { (Parse-StateDateTime $State.RecordedBootUtc).ToUniversalTime() } else { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime() }
+    $Since = if ($State.Scenario -eq 'SignOutSignIn' -and $State.ArmedAtUtc) {(Parse-StateDateTime $State.ArmedAtUtc).ToUniversalTime()} elseif ($State.RecordedBootUtc) { (Parse-StateDateTime $State.RecordedBootUtc).ToUniversalTime() } else { (Parse-StateDateTime $State.PreparedAt).ToUniversalTime() }
     $End = if ($State.TraceStopRequestedAtUtc) { (Parse-StateDateTime $State.TraceStopRequestedAtUtc).ToUniversalTime() } elseif ($State.ReproductionEndUtc) { (Parse-StateDateTime $State.ReproductionEndUtc).ToUniversalTime() } else { [datetime]::MinValue }
     if ($Info -and $End -ne [datetime]::MinValue -and $Info.LastRunTime.ToUniversalTime() -gt $End) { 'Metrics task ran again after the reproduction ended. Review run association.' | Add-Content -LiteralPath "$PassFolder\Collection-errors.txt" }
     try { Copy-ToolMetrics -PassFolder $PassFolder -SinceUtc $Since -RequiredEndUtc $End | Out-Null }
@@ -2410,14 +2632,10 @@ try {
     try { Restore-PersistentAMTrace -Case $Case }
     catch { $_ | Out-String | Add-Content "$PassFolder\Collection-errors.txt"; Write-Warning "Restoration requires attention: $_" }
 }
-foreach ($Channel in (@('System','Application') + $Channels)) {
-    $Output = "$Case\Events\" + ($Channel -replace '[/\\]', '-') + '.evtx'
-    try {
-        $Messages = & wevtutil.exe epl $Channel $Output /ow:true 2>&1
-        if ($LASTEXITCODE -ne 0) { "$Channel : $Messages" | Add-Content "$Case\Events\Export-errors.txt" }
-    } catch { "$Channel : $_" | Add-Content "$Case\Events\Export-errors.txt" }
-}
-Save-NativeEvidence 'gpresult.exe' @('/h',"$Case\Events\gpresult-administrator.html",'/f') "$Case\Events\gpresult-output.txt"
+$eventFolder = if ($Pass -eq 'PassB') { "$Case\Events\PassB" } else { "$Case\Events" }
+$null = New-Item -ItemType Directory -Path $eventFolder -Force
+Export-PassEvents $eventFolder
+Save-NativeEvidence 'gpresult.exe' @('/h',"$eventFolder\gpresult-administrator.html",'/f') "$eventFolder\gpresult-output.txt"
 Get-ChildItem -LiteralPath $Case -Recurse -File | Select-Object FullName, Length, LastWriteTimeUtc | Export-Csv -LiteralPath "$Case\File-inventory.csv" -NoTypeInformation
 $State.Finished = $true
 $State | Add-Member -NotePropertyName FinishedAtUtc -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o')) -Force
@@ -2638,8 +2856,13 @@ if (Test-Path -LiteralPath $CaseRoot) {
             if (!(Test-Path -LiteralPath $phaseFile -PathType Leaf)) { continue }
             $phase = Get-Content -LiteralPath $phaseFile -Raw | ConvertFrom-Json
             if ($phase.CasePath -and $phase.ConfigRestored) {
-                [pscustomobject]@{ RunId=$phase.RunId; RestoredAtUtc=[datetime]::UtcNow.ToString('o') } |
-                    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir.FullName 'Cleanup\Collector-closed.json') -Encoding UTF8
+                $closed = Join-Path $dir.FullName 'Cleanup\Collector-closed.json'
+                if (!(Test-Path -LiteralPath $closed)) {
+                    $sysMain = try { Get-Service SysMain -ErrorAction Stop | Select-Object Name,Status,StartType } catch { $_.Exception.Message }
+                    $defender = try { Get-MpComputerStatus -ErrorAction Stop | Select-Object AMRunningMode,AntivirusEnabled,RealTimeProtectionEnabled,AMProductVersion } catch { $_.Exception.Message }
+                    [pscustomobject]@{ RunId=$phase.RunId; RestoredAtUtc=[datetime]::UtcNow.ToString('o'); SysMain=$sysMain; Defender=$defender } |
+                        ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $closed -Encoding UTF8
+                }
             }
         }
         Write-Host "Settings restored. Case evidence retained: $CaseRoot"
@@ -2672,7 +2895,7 @@ if ($Stage -eq 'Gui' -and !(Test-CollectorDesktop)) {
 $gate = $null
 $held = $false
 try {
-    if ($Stage -notin 'Help','Gui','Status','CaptureMetrics','SaveDebug') {
+    if ($Stage -notin 'Help','Gui','Status','CaptureMetrics','SaveDebug' -or ($Stage -eq 'SaveDebug' -and $Pass -eq 'PassB')) {
         $gate = [Threading.Mutex]::new($false,'Global\SWP-Perf-Operator')
         try { $held = $gate.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
         if (!$held) { throw 'Another collector action is in progress. Run Status or wait for it to finish.' }
@@ -2708,8 +2931,16 @@ try {
     'PrepareB' { Invoke-PrepareB }
     'FinishB' { Invoke-Finish -Pass 'PassB' }
     'SaveDebug' {
-        Read-CollectionState -Pass $Pass
+        Read-CollectionState -Pass $Pass -RequireReboot:($Pass -eq 'PassB')
+        if ($Pass -eq 'PassB') {
+            if ($State.Finished -or $State.PreparationComplete -eq $false) { throw 'Pass B is not ready for an early snapshot.' }
+            Set-PassBReproductionEnd
+        }
         Save-AMDebug -Label "$Pass-Early"
+        if ($Pass -eq 'PassB') {
+            $State | Add-Member -NotePropertyName EarlyDebugSavedUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+            Save-State
+        }
     }
     'Diagnostics' {
         Assert-CollectorsStopped
