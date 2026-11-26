@@ -168,6 +168,27 @@ try {
             $State.Scenario='SignOutSignIn'
             Assert-Throws { Confirm-ColdSignInReady PassA } 'Wrong scenario accepted'
         }
+        Test-Case 'Readiness pairs a control across a same-millisecond AMSP rotation' {
+            $ToolRoot = Join-Path $Root 'Probe fixture'
+            $AmspDebug = Join-Path $ToolRoot 'debug'
+            $null = New-Item -ItemType Directory $AmspDebug -Force
+            function Get-AuthenticodeSignature { param($LiteralPath) [pscustomobject]@{Status='Valid'} }
+            function Get-ChildItem {
+                param($LiteralPath,$Filter,[switch]$File)
+                $probeDir = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $ToolRoot -Directory -Filter 'ScanControl-*'
+                $probe = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $probeDir.FullName -File -Filter 'whoami-*.exe'
+                $stamp = (Get-Date).ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
+                $old = Join-Path $AmspDebug 'Amsp_LocalDebugLog.0.log'
+                $active = Join-Path $AmspDebug 'Amsp_LocalDebugLog.log'
+                "$stamp,[00001:00002] >>> SCANFILE: \\?\$($probe.FullName),[fixture]" | Set-Content $old -Encoding Unicode
+                "$stamp,[00001:00002] <<< SCANFILE: scan time (microsecond) = 234" | Set-Content $active -Encoding Unicode
+                [IO.File]::SetLastWriteTimeUtc($old,[DateTime]::UtcNow.AddSeconds(-1))
+                Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $LiteralPath -Filter $Filter -File
+            }
+            $pairs = @(Get-FreshScanControl -WaitSeconds 1)
+            Assert-True ($pairs.Count -eq 1 -and $pairs[0].EngineMicroseconds -eq 234) 'Missed a scan completion in the next generation'
+            Assert-True (!(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $ToolRoot -Directory -Filter 'ScanControl-*')) 'Probe directory was retained'
+        }
         Test-Case 'Pass B desktop buttons run the correct CLI stages in both finish and recovery workflows' {
             $ToolRoot=Join-Path $Root 'WpfTools'
             $null=New-Item -ItemType Directory $ToolRoot

@@ -1,6 +1,6 @@
 {
   "date": "2026-11-26",
-  "collectorSHA256": "e9c86db26095605d6c5d72f8c5801e3ef34be4b67b10f072ba303a840241470d",
+  "collectorSHA256": "b22bf2c14c6bed0e6d946ddb3b3a12ba84c9b38f61bf9d3c3741aace4c6a7464",
   "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
   "agentCore": "20.0.3-31610",
   "supportTool": "1.0.0.1203",
@@ -81,11 +81,12 @@
     "otherScenarios": "Separate earlier captures exercised same-boot sign-in, reboot and recovery."
   },
   "coldSignInReadiness": {
-    "collectorSHA256": "e9c86db26095605d6c5d72f8c5801e3ef34be4b67b10f072ba303a840241470d",
+    "collectorSHA256": "b22bf2c14c6bed0e6d946ddb3b3a12ba84c9b38f61bf9d3c3741aace4c6a7464",
     "platform": "Windows 11, Windows PowerShell 5.1",
     "checks": [
       "Displayed the prepared Pass A and Pass B instructions in WPF at the minimum supported window size.",
-      "Exercised the readiness decision with Windows fixtures for a new pair, a retry, attempts without a pair, an occupied console, sign-in during the check and the same-boot scenario."
+      "Exercised the readiness decision with Windows fixtures for a new pair, a retry, attempts without a pair, an occupied console, sign-in during the check and the same-boot scenario.",
+      "Ran the actual signed Windows control and read generated log records split across a rotation within the same millisecond. The exact test file matched and its temporary directory was removed."
     ],
     "priorLabObservation": "DSA 20.0.3-31610. An immediate sign-in had zero scan starts from authentication through Explorer. With the credential screen held, unique signed probes were observed before authentication. The later sign-in recorded 190 paired scans for 184 paths from authentication through Explorer.",
     "scope": "The lab reboot comparison preceded this CLI stage. The new stage itself was exercised with controlled inputs. No minimum delay or guaranteed sign-in coverage was established."

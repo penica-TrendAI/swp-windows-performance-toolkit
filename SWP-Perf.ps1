@@ -727,7 +727,11 @@ function Get-FreshScanControl {
         & $file | Out-Null
         $until=(Get-Date).AddSeconds($WaitSeconds)
         do {
-            $logs = @(Get-ChildItem -LiteralPath $AmspDebug -Filter 'Amsp_LocalDebugLog*.log' -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 3 -ExpandProperty FullName)
+            $recent = Get-ChildItem -LiteralPath $AmspDebug -Filter 'Amsp_LocalDebugLog*.log' -File |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 3
+            # Records can share a millisecond across rotation. Read the active generation last.
+            $logs = @($recent | Sort-Object @{Expression={ $_.Name -eq 'Amsp_LocalDebugLog.log' }}, LastWriteTimeUtc |
+                Select-Object -ExpandProperty FullName)
             $reader = New-Object SwpScanReader
             $reader.Read([string[]]$logs,$since,'9999/12/31 23:59:59.999',$true)
             $control = @($reader.Pairs | Where-Object { $_.Path -eq $file -or $_.Path -eq ('\\?\'+$file) })
