@@ -247,6 +247,7 @@ switch ($Stage) {
             $Offset=[datetimeoffset]::new($Start)
             Assert-True ((Parse-StateDateTime $Offset).ToUniversalTime() -eq $Start) 'Typed DateTimeOffset changed.'
             Assert-True ((Parse-StateDateTime $Start.ToString('o')).ToUniversalTime() -eq $Start) 'ISO roundtrip failed.'
+            Assert-True ((Parse-StateDateTime '2001-01-01T01:00:00+01:00') -eq (Parse-StateDateTime '2001-01-01T00:00:00Z')) 'Operator times without fractional seconds lost their offset.'
             Assert-True ((Parse-StateDateTime '15/06/2001 08.09.10').Year -eq 2001) 'Existing European state format lost.'
         }
         if ($VendorKitRoot) {

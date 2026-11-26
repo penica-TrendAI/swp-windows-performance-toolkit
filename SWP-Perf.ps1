@@ -1121,6 +1121,9 @@ function Parse-StateDateTime {
     param([object]$DateString)
     if ($DateString -is [datetime]) { return $DateString }
     if ($DateString -is [datetimeoffset]) { return $DateString.UtcDateTime }
+    if ($DateString -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$') {
+        return [datetimeoffset]::Parse($DateString,[cultureinfo]::InvariantCulture).UtcDateTime
+    }
     $formats = @(
         'o',  # ISO 8601
         'dd/MM/yyyy HH.mm.ss',  # European format with dots
@@ -2586,11 +2589,15 @@ if (Test-Path $PassFolder) {
     $PassFolder = "$Case\Trend\$Pass-Retry-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
     Write-Warning "Earlier snapshot preserved. This finish attempt uses: $PassFolder"
 }
-New-Item -ItemType Directory -Path $PassFolder -ErrorAction Stop | Out-Null
 try {
+    $disableError = $null
     if ($Task) {
-        try { Disable-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' | Out-Null }
-        catch { $_ | Out-String | Add-Content "$PassFolder\Collection-errors.txt" }
+        try { Disable-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction Stop | Out-Null }
+        catch { $disableError = $_.Exception.Message; Write-Warning "Could not disable the owned metrics task: $disableError" }
+    }
+    New-Item -ItemType Directory -Path $PassFolder -ErrorAction Stop | Out-Null
+    if ($disableError) { $disableError | Add-Content -LiteralPath "$PassFolder\Collection-errors.txt" }
+    if ($Task) {
         try {
             $Info = Get-ScheduledTaskInfo -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction Stop
             $Info | Format-List * | Out-File "$PassFolder\Task-result.txt"
@@ -2656,7 +2663,10 @@ try {
     else { Write-Warning 'Agent CLI diagnostic request skipped explicitly. The handoff assessment will report this gap.' }
 } finally {
     try { Restore-PersistentAMTrace -Case $Case }
-    catch { $_ | Out-String | Add-Content "$PassFolder\Collection-errors.txt"; Write-Warning "Restoration requires attention: $_" }
+    catch {
+        Write-Warning "Restoration requires attention: $_"
+        if (Test-Path -LiteralPath $PassFolder -PathType Container) { $_ | Out-String | Add-Content -LiteralPath "$PassFolder\Collection-errors.txt" }
+    }
 }
 $eventFolder = if ($Pass -eq 'PassB') { "$Case\Events\PassB" } else { "$Case\Events" }
 $null = New-Item -ItemType Directory -Path $eventFolder -Force
