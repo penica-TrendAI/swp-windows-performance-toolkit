@@ -13,9 +13,9 @@ $user = Read-Host 'Enter the account printed by whoami on your normal desktop'
 & $swp -Stage Prepare -Scenario SignOutSignIn -AffectedUser $user
 ```
 
-**3. Reproduce.** After **Prepared**, sign out and back in for a same-boot test. For per-file timings after restart, stay at the sign-in screen. From a second device, run the **CheckSignInReady** command shown by the collector in an elevated remote shell on this PC. Sign in at **READY TO SIGN IN**. For the usual immediate sign-in, use normal timing. Record credential submission, usable desktop and any agreed app launch/ready times.
+**3. Reproduce.** After **Prepared**, follow the selected scenario. For **SignOutSignIn**, fully sign out and sign back in. For **Reboot**, restart Windows, wait **two full minutes** from the moment the sign-in screen appears, then sign in locally. For an immediate comparison, use your usual timing and note that choice. Record credential submission, usable desktop and any agreed application launch/ready times.
 
-**4. Stop immediately.** Reopen the collector and click **Stop trace now**, or open a **new elevated Windows PowerShell**. The previous window and its variables are gone. Run these lines before waiting for metrics. Note any delay opening the elevated window.
+**4. Stop at the milestone.** After reboot, the collector reopens for the local administrator who prepared the case. Click **Stop trace now** when the desktop or agreed application responds. If the window is closed, use the Start shortcut or run these commands in a new elevated PowerShell.
 
 ```powershell
 $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'

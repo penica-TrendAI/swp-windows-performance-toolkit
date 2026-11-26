@@ -37,7 +37,7 @@ With the pinned vendor bundles and the long publication test enabled, the suite 
 
 ## Edit and render the documentation
 
-`Documentation/Handbook.md` is the authoring source. Each level-two heading starts a handbook page. The first page introduces the roles and pages two and six supply the end-user and administrator-participant handouts. Use two-column tables, fenced code blocks, ordinary paragraphs, bold text, inline code and Markdown links. The renderer handles that subset. If section order or page count changes, update the page references in the entry guide and this file and review the participant-sheet extraction.
+`Documentation/Handbook.md` is the authoring source. Each level-two heading starts a handbook page. The first page introduces the roles and pages two and six supply the end-user and administrator-participant handouts. Use two-column tables, fenced code blocks, ordinary paragraphs, bold text, inline code and Markdown links. Page 23 is the GUI action reference. The renderer handles that subset. If section order or page count changes, update the page references in the entry guide and this file and review the participant-sheet extraction.
 
 Rendering is a maintainer task. Use Python 3.10 or later with `python-docx` and `pypdf`, plus LibreOffice for PDF export. In an environment with these packages installed, run the following from the extracted kit. Supply the installed LibreOffice executable path through `--soffice` if it is not on PATH.
 
@@ -71,6 +71,10 @@ Exercise the dashboard with a finished, open Pass A case. Verify the optional pr
 
 `Procmon/PassB-segments.csv` records the segments observed at finish. Reopen the combined ZIP and check its assessment after removing or replacing a segment in a fixture. Each pass has its own event export manifest. Failed exports for known channels are evidence gaps. Also test recovery before restart and after a boot without a saved PML. A successful archive hash verifies file integrity independently of sign-in timing coverage.
 
-## First sign-in after restart
+## Local sign-in and AMSP preservation
 
-The pre-restart GUI and CLI share the participant instruction and the case-specific command. `CheckSignInReady` runs on the endpoint through an elevated noninteractive session. It validates the reboot pass, reuses the same signed scan control as the same-boot workflow, and verifies a fresh path-matched pair. The check rejects an occupied console and makes up to three probe attempts. `Trend/<pass>-Cold-signin-control.json` describes the latest check. Only the later sign-in assessment establishes coverage between authentication and Explorer. Fixture tests cover retries, an occupied console, a sign-in during verification, stale proof and both GUI pass instructions.
+The reboot GUI and CLI give the same two-minute instruction for Pass A and Pass B. The preparing local administrator's SID must match the affected account for automatic GUI reopening. `-NoAutoResume` selects CLI-only operation. Earlier callers can still invoke the optional `CheckSignInReady` diagnostic explicitly.
+
+Prepare registers `WatchAMSP` as SYSTEM and, for an eligible reboot pass, `ResumeGui` with the operator's interactive token. Each task uses the fixed installed collector, case, pass and run ID. The resumed window records its launch in `Cleanup\<pass>-GUI-launch.json`. A create-once claim prevents a second window for that run. Finish, recovery and cleanup remove owned tasks. Existing cases without the new state fields use the earlier lifecycle.
+
+The watcher polls rotated log metadata every two seconds, keeps reused names in separate version directories and makes a final bounded copy of the active file at the stop signal. Review the live result and any error log for failed reads, low space, timeouts or a missing completion. The parser combines overlapping snapshots, retains sign-in starts without a duration, and counts complete pairs only when both timestamps fall between authentication and Explorer. Cross-generation pairs and repeated scans of one path are valid.

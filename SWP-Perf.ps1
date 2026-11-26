@@ -14,8 +14,8 @@ self-protection through the console, and confirm no unrelated WPR/Procmon captur
 
 PRIMARY SEQUENCE (reboot, login and first application launches in the same pass):
   .\SWP-Perf.ps1 -Stage Prepare
-  # Restart. For per-file timings, hold at the sign-in screen while an administrator
-  # runs CheckSignInReady remotely on this computer. At the go-ahead, sign in and reproduce.
+  # Restart. Wait two full minutes at the visible sign-in screen, then sign in locally.
+  # The collector reopens for the preparing administrator. Stop at the agreed milestone.
   .\SWP-Perf.ps1 -Stage StopTrace
   .\SWP-Perf.ps1 -Stage FinishAndPackage
 
@@ -82,7 +82,7 @@ https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-opt
 param(
     [Alias('Action')]
     [ValidateSet('Gui','Help','InstallTools','Prepare','StopTrace','Finish','FinishAndPackage','Status',
-        'PrepareB','CheckSignInReady','SaveDebug','FinishB','RestoreTrace','Diagnostics','Package','CollectContext','Cleanup','RecoverAndPackage','CaptureMetrics')]
+        'PrepareB','CheckSignInReady','SaveDebug','FinishB','RestoreTrace','Diagnostics','Package','CollectContext','Cleanup','RecoverAndPackage','CaptureMetrics','WatchAMSP','ResumeGui')]
     [string]$Stage = 'Gui',
     [ValidatePattern('^C:\\SWP-Perf\\CASE-[A-Za-z0-9_-]+$')]
     [string]$Case = 'C:\SWP-Perf\CASE-01',
@@ -99,6 +99,7 @@ param(
     [ValidateRange(1,120)]
     [int]$DiagnosticTimeoutMinutes = 30,
     [switch]$SkipDiagnostics,
+    [switch]$NoAutoResume,
     [switch]$IncludeNetwork,
     [switch]$AllowDiagTrackMiniLogger,
     [ValidateRange(0,600)]
@@ -465,6 +466,201 @@ function Copy-NewMetricBatches {
     }
 }
 
+function Get-PassTaskSpec {
+    param($Owner,[string]$CasePath,[string]$Phase,[ValidateSet('WatchAMSP','ResumeGui')][string]$Kind)
+    if ($Owner.RunId -notmatch '^[a-f0-9]{32}$' -or $Phase -notin 'PassA','PassB' -or
+        $CasePath -notmatch '^C:\\SWP-Perf\\CASE-[A-Za-z0-9_-]+$') { throw 'Invalid pass task identity.' }
+    $hostOptions = if ($Kind -eq 'ResumeGui') { '-STA -WindowStyle Hidden' } else { '-NonInteractive' }
+    if ($Owner.TaskDefaultPolicy) { $hostOptions += ' -ExecutionPolicy RemoteSigned' }
+    [pscustomobject]@{
+        Name = "SWP-Perf-$Kind-$($Owner.RunId)"
+        Exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        Arguments = '-NoProfile {0} -File "{1}\SWP-Perf.ps1" -Stage {2} -Case "{3}" -Pass {4} -RunId {5}' -f $hostOptions,$ToolRoot,$Kind,$CasePath,$Phase,$Owner.RunId
+    }
+}
+
+function Register-PassTasks {
+    param([string]$Phase)
+    $operator = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $resume = $false
+    if ($State.Scenario -eq 'Reboot' -and !$NoAutoResume) {
+        try {
+            $target = [Security.Principal.NTAccount]::new($State.AffectedUser).Translate([Security.Principal.SecurityIdentifier])
+            $resume = $target -eq $operator.User -and !$operator.IsSystem
+        } catch { Write-Warning 'The affected account could not be resolved for GUI reopening. Use the Start menu after sign-in.' }
+    }
+    $explicitPolicy = @(Get-ExecutionPolicy -List | Where-Object { $_.Scope -ne 'Process' -and $_.ExecutionPolicy -ne 'Undefined' })
+    $State | Add-Member -NotePropertyName TaskDefaultPolicy -NotePropertyValue (!$explicitPolicy.Count) -Force
+    $State | Add-Member -NotePropertyName LiveAMSP -NotePropertyValue $true -Force
+    $State | Add-Member -NotePropertyName ResumeSid -NotePropertyValue $(if ($resume) { $operator.User.Value }) -Force
+    $State | Add-Member -NotePropertyName TaskCasePath -NotePropertyValue $Case -Force
+    Save-State
+    $kinds = @('WatchAMSP')
+    if ($resume) { $kinds += 'ResumeGui' }
+    foreach ($kind in $kinds) {
+        $spec = Get-PassTaskSpec $State $Case $Phase $kind
+        $action = New-ScheduledTaskAction -Execute $spec.Exe -Argument $spec.Arguments -WorkingDirectory $ToolRoot
+        $options = @{
+            Action=$action
+            Settings=(New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes $(if ($kind -eq 'WatchAMSP') {50} else {0})) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries)
+        }
+        if ($kind -eq 'ResumeGui') {
+            $options.Principal = New-ScheduledTaskPrincipal -UserId $operator.Name -LogonType Interactive -RunLevel Highest
+            $options.Trigger = New-ScheduledTaskTrigger -AtLogOn -User $operator.Name
+        } else {
+            $options.Principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+            if ($State.Scenario -eq 'Reboot') { $options.Trigger = New-ScheduledTaskTrigger -AtStartup }
+        }
+        $null = Register-ScheduledTask -TaskPath '\' -TaskName $spec.Name -InputObject (New-ScheduledTask @options) -ErrorAction Stop
+        Write-TaskXml (Export-ScheduledTask -TaskPath '\' -TaskName $spec.Name) "$Case\Cleanup\$Phase-$kind-task.xml"
+    }
+}
+
+function Request-WatchStop {
+    param($Owner,[string]$CasePath)
+    if ($Owner.LiveAMSP) {
+        $path = Assert-LocalEvidencePath (Join-Path $CasePath "Cleanup\WatchAMSP-$($Owner.RunId).stop")
+        [IO.File]::WriteAllText($path,[datetime]::UtcNow.ToString('o'))
+    }
+}
+
+function Remove-PassTasks {
+    param($Owner,[string]$CasePath,[string]$Phase)
+    if (!$Owner.LiveAMSP) { return }
+    if ($Owner.ComputerName -ne $env:COMPUTERNAME) { throw 'Cannot remove pass tasks owned by another computer.' }
+    foreach ($kind in 'WatchAMSP','ResumeGui') {
+        if ($kind -eq 'ResumeGui' -and !$Owner.ResumeSid) { continue }
+        $spec = Get-PassTaskSpec $Owner $Owner.TaskCasePath $Phase $kind
+        $task = Get-ScheduledTask -TaskPath '\' -TaskName $spec.Name -ErrorAction SilentlyContinue
+        if (!$task) { continue }
+        if (@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $spec.Exe -or
+            $task.Actions[0].Arguments -cne $spec.Arguments -or $task.Actions[0].WorkingDirectory -ne $ToolRoot) {
+            throw "Unexpected action for $($spec.Name). Preserve the task and case for review."
+        }
+        if ($kind -eq 'WatchAMSP') {
+            Request-WatchStop $Owner $CasePath
+            $deadline = [datetime]::UtcNow.AddSeconds(90)
+            while ($task.State -in 'Running','Queued') {
+                if ([datetime]::UtcNow -ge $deadline) { throw 'The AMSP watcher is still finishing its copy. Retry before packaging or deleting the case.' }
+                Start-Sleep -Seconds 1
+                $task = Get-ScheduledTask -TaskPath '\' -TaskName $spec.Name -ErrorAction Stop
+            }
+        }
+        Unregister-ScheduledTask -TaskPath '\' -TaskName $spec.Name -Confirm:$false -ErrorAction Stop
+    }
+}
+
+function Read-PassWorkerState {
+    Read-CollectionState -Pass $Pass
+    if (!$State.LiveAMSP -or $State.RunId -cne $RunId -or $State.TaskCasePath -ne $Case -or $State.ComputerName -ne $env:COMPUTERNAME) {
+        throw 'Pass task identity does not match the prepared case.'
+    }
+    if ($State.Finished -or $State.ConfigRestored -or $State.TraceSaved -or $State.ReproductionEndUtc -or
+        (Test-Path -LiteralPath "$Case\Cleanup\Collector-closed.json") -or
+        (Test-Path -LiteralPath "$Case\Cleanup\WatchAMSP-$RunId.stop")) { return $false }
+    if ($Pass -eq 'PassA') { Assert-CaseTrace $State }
+    else {
+        $boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+        if (!$State.PreparationComplete -or $boot -le (Parse-StateDateTime $State.PreparedBoot).ToUniversalTime()) { return $false }
+        Assert-PassBBoot $boot
+    }
+    return $true
+}
+
+function Invoke-ResumeGui {
+    if (!(Read-PassWorkerState)) { return }
+    if ($State.Scenario -ne 'Reboot' -or !(Test-CollectorDesktop) -or
+        $State.ResumeSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'Wrong desktop or account for automatic GUI reopening.' }
+    $marker = Assert-LocalEvidencePath "$Case\Cleanup\$Pass-GUI-launch.json"
+    $record = [ordered]@{ RunId=$RunId; Pass=$Pass; AccountSid=$State.ResumeSid; ProcessId=$PID
+        SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId; LaunchUtc=[datetime]::UtcNow.ToString('o') }
+    try { $stream=[IO.File]::Open($marker,'CreateNew','Write','None') } catch [IO.IOException] {
+        if (Test-Path -LiteralPath $marker) { return }; throw
+    }
+    try {
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json))
+        $stream.Write($bytes,0,$bytes.Length)
+    } finally { $stream.Dispose() }
+    Show-CollectorWindow -RequestedCase $Case
+}
+
+function Copy-RotatedAMSP {
+    param([string]$Source,[string]$Destination,[datetime]$Since,[hashtable]$Seen,[switch]$IncludeActive)
+    $null = Assert-LocalEvidencePath $Source
+    $files = Get-ChildItem -LiteralPath $Source -Filter 'Amsp_LocalDebugLog*.log' -File -ErrorAction Stop |
+        Where-Object { ($_.Name -match '^Amsp_LocalDebugLog\.\d+\.log$' -and $_.LastWriteTimeUtc -ge $Since) -or
+            ($IncludeActive -and $_.Name -eq 'Amsp_LocalDebugLog.log') } | Sort-Object LastWriteTimeUtc
+    foreach ($file in $files) {
+        try {
+            $version = "$($file.LastWriteTimeUtc.Ticks)-$($file.Length)"
+            if ($Seen[$file.Name] -eq $version -or $file.Length -eq 0) { continue }
+            $null = Assert-LocalEvidencePath $file.FullName
+            $dir = Assert-LocalEvidencePath (Join-Path $Destination $version)
+            $null = [IO.Directory]::CreateDirectory($dir)
+            $target = Join-Path $dir $file.Name
+            $temp = $target + '.partial'
+            $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+            $inputFile = [IO.File]::Open($file.FullName,'Open','Read',$share)
+            try {
+                $length=$inputFile.Length
+                if ($length -ne $file.Length -and $file.Name -ne 'Amsp_LocalDebugLog.log') { throw "AMSP generation changed while opening $($file.Name)" }
+                $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($dir))
+                if ($drive.AvailableFreeSpace -lt ($length + 1GB)) { throw 'Insufficient space for AMSP copy and 1 GiB reserve.' }
+                $outputFile=[IO.File]::Open($temp,'CreateNew','Write','None')
+                try {
+                    $buffer = [byte[]]::new(262144)
+                    $remaining = $length
+                    while ($remaining -gt 0) {
+                        $n=$inputFile.Read($buffer,0,[int][math]::Min($remaining,$buffer.Length))
+                        if (!$n) { throw "AMSP source shortened during copy: $($file.Name)" }
+                        $outputFile.Write($buffer,0,$n)
+                        $remaining-=$n
+                    }
+                } finally { $outputFile.Dispose() }
+                [IO.File]::SetLastWriteTimeUtc($temp,$file.LastWriteTimeUtc)
+                [IO.File]::Move($temp,$target)
+                $Seen[$file.Name]=$version
+            } finally {
+                $inputFile.Dispose()
+                if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) }
+            }
+        } catch { "AMSP copy for $($file.Name): $($_.Exception.Message)" }
+    }
+}
+
+function Invoke-AMSPWatcher {
+    if (!(Read-PassWorkerState)) { return }
+    $dest = Assert-LocalEvidencePath "$Case\Trend\AMDebug\$Pass-Live-$RunId"
+    $null = [IO.Directory]::CreateDirectory($dest)
+    $marker=Join-Path $dest 'StartUtc.txt'
+    try { $s=[IO.File]::Open($marker,'CreateNew','Write','None') } catch [IO.IOException] {
+        if (Test-Path -LiteralPath $marker) { return }; throw
+    }
+    $s.Dispose()
+    $start=[datetime]::UtcNow
+    $start.ToString('o') | Set-Content -LiteralPath $marker
+    $since = if ($State.Scenario -eq 'Reboot') { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime() }
+        else { (Parse-StateDateTime $State.ArmedAtUtc).ToUniversalTime() }
+    $seen=@{}
+    $errors=[Collections.Generic.HashSet[string]]::new()
+    $stop="$Case\Cleanup\WatchAMSP-$RunId.stop"
+    do {
+        $requested = [IO.File]::Exists($stop)
+        $expired = [datetime]::UtcNow -ge $start.AddMinutes(45)
+        $ending = $requested -or $expired
+        $messages = try { @(Copy-RotatedAMSP $AmspDebug $dest $since $seen -IncludeActive:$ending) }
+            catch { @($_.Exception.Message) }
+        foreach ($msg in $messages) {
+            if ($errors.Add($msg)) { $msg | Add-Content -LiteralPath "$dest\Copy-errors.txt" }
+        }
+        if (!$ending) { Start-Sleep -Seconds 2 }
+    } while (!$ending)
+    [ordered]@{RunId=$RunId;StartUtc=$start.ToString('o');EndUtc=[datetime]::UtcNow.ToString('o')
+        Reason=$(if ($requested) {'StopRequested'} else {'TimeLimit'});Errors=@($errors | Sort-Object)
+        FinalActiveSaved=$seen.ContainsKey('Amsp_LocalDebugLog.log')} |
+        ConvertTo-Json -Depth 3 | Set-Content -LiteralPath "$dest\Result.json" -Encoding UTF8
+}
+
 function Invoke-MetricsWorker {
     Read-CollectionState -Pass $Pass
     if ($State.ComputerName -ne $env:COMPUTERNAME -or $RunId -ne $State.RunId) { throw 'Metrics case identity has changed.' }
@@ -645,10 +841,15 @@ public sealed class SwpScanReader {
     }
     static readonly Regex Header = new Regex(@"^(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\.\d{3}),\[(\d+:\d+)\]", RegexOptions.Compiled);
     static readonly Regex Duration = new Regex(@"<<< SCANFILE:\s*scan time \(microsecond\)\s*=\s*(0x[0-9a-fA-F]+|\d+)", RegexOptions.Compiled);
+    public readonly List<SwpScan> UnpairedStarts = new List<SwpScan>();
     public readonly List<SwpScan> Pairs = new List<SwpScan>();
     public readonly List<string> Errors = new List<string>();
     public int UnmatchedStarts, UnmatchedEnds;
     public string FirstRecord, LastRecord;
+    void RecordUnmatched(Row row) {
+        UnmatchedStarts++;
+        UnpairedStarts.Add(new SwpScan { StartLocal=row.Stamp, Thread=row.Thread, Path=row.Path });
+    }
     public void Read(string[] paths, string from, string through, bool tail) {
         var rows = new List<Row>();
         var counts = new Dictionary<string,int>(StringComparer.Ordinal);
@@ -696,7 +897,8 @@ public sealed class SwpScanReader {
         var pending = new Dictionary<string,Row>();
         foreach(var r in rows.OrderBy(x=>x.Stamp,StringComparer.Ordinal).ThenBy(x=>x.Sequence)) {
             if(r.Start) {
-                if(pending.ContainsKey(r.Thread)) UnmatchedStarts++;
+                Row previous;
+                if(pending.TryGetValue(r.Thread,out previous)) RecordUnmatched(previous);
                 pending[r.Thread]=r;
             } else {
                 Row begin;
@@ -706,7 +908,7 @@ public sealed class SwpScanReader {
                 Pairs.Add(new SwpScan {StartLocal=begin.Stamp,EndLocal=r.Stamp,Thread=r.Thread,Path=begin.Path,EngineMicroseconds=us});
             }
         }
-        UnmatchedStarts+=pending.Count;
+        foreach (var begin in pending.Values) RecordUnmatched(begin);
     }
 }
 
@@ -748,14 +950,11 @@ function Confirm-WarmScanControl {
 }
 
 function Get-ColdSignInInstructions {
-    param([string]$CasePath, [string]$PassName)
-    $command = "& '$ToolRoot\SWP-Perf.ps1' -Stage CheckSignInReady -Pass $PassName -Case '$CasePath'"
-    @(
-        'For per-file scan timings, restart Windows and stay at the sign-in screen. Enter credentials only when the administrator gives the go-ahead.'
-        'Administrator: from another device, run this on the restarted computer in an elevated, noninteractive management session:'
-        $command
-        'After READY TO SIGN IN, give the go-ahead. If measuring the usual immediate sign-in instead, use normal timing and record that choice.'
-    ) -join [Environment]::NewLine
+    param($Owner,[string]$PassName)
+    $next = if ($PassName -eq 'PassB') { 'Save Pass B early logs' } else { 'Stop trace now' }
+    $window = if ($Owner.ResumeSid) { 'The collector reopens automatically in your desktop session.' }
+        else { 'Open SWP Performance Collector from Start or continue in elevated PowerShell.' }
+    "Restart Windows. When the Windows sign-in screen first appears, wait two full minutes, then sign in locally. For a usual immediate sign-in comparison, use normal timing and record that choice. $window At the agreed desktop or application milestone, choose $next."
 }
 
 function Confirm-ColdSignInReady {
@@ -844,7 +1043,7 @@ function Save-SignInMilestones {
 function Get-ScanCoverage {
     param($Files,[datetime]$FromUtc,[datetime]$ToUtc,[string]$PassName='PassA')
     $unknown='Per-file AMSP scan timings during sign-in were not verified.'
-    $r=[ordered]@{Status='Unverified';Message=$unknown;SignInPairs=$null;AfterSignInPairs=$null;CapturedPairs=0;CredentialToDesktopPairs=$null;AppWindows=@();FirstRecordLocal=$null;LastRecordLocal=$null;FirstPairLocal=$null;LastPairLocal=$null;UnmatchedStarts=0;UnmatchedEnds=0;Errors=@()}
+    $r=[ordered]@{Status='Unverified';Message=$unknown;SignInPairs=$null;SignInScanStarts=$null;SignInStartPaths=$null;SignInDistinctPaths=$null;AfterSignInPairs=$null;CapturedPairs=0;CredentialToDesktopPairs=$null;AppWindows=@();FirstRecordLocal=$null;LastRecordLocal=$null;FirstPairLocal=$null;LastPairLocal=$null;UnmatchedStarts=0;UnmatchedEnds=0;Errors=@()}
     if($FromUtc -eq [datetime]::MinValue -or $ToUtc -eq [datetime]::MinValue){return [pscustomobject]$r}
     $fmt='yyyy/MM/dd HH:mm:ss.fff';$ci=[cultureinfo]::InvariantCulture
     try {
@@ -868,7 +1067,20 @@ function Get-ScanCoverage {
         if($mark.SessionCorroborated -and $mark.AuthenticatedUtc -and $mark.ExplorerUtc) {
             $lo=LocalStamp $mark.AuthenticatedUtc; $hi=LocalStamp $mark.ExplorerUtc
             $rows=@($reader.Pairs|Where-Object {$_.StartLocal -ge $lo -and $_.EndLocal -le $hi})
+            $started = @(foreach ($items in $reader.Pairs,$reader.UnpairedStarts) {
+                foreach ($item in $items) {
+                    if ($item.StartLocal -ge $lo -and $item.StartLocal -le $hi) { $item }
+                }
+            })
+            $r.SignInScanStarts=$started.Count
+            $r.SignInStartPaths=@($started | ForEach-Object Path | Sort-Object -Unique).Count
+            $startsFile=Join-Path $Case "Trend\$PassName-SignIn-scan-starts.csv"
+            $started | Sort-Object StartLocal | Select-Object StartLocal,Thread,Path,EndLocal,
+                @{Name='EngineMicroseconds';Expression={if ($_.EndLocal) { $_.EngineMicroseconds }}},
+                @{Name='CompletedInSignIn';Expression={[bool]($_.EndLocal -and $_.EndLocal -le $hi)}} |
+                Export-Csv -LiteralPath $startsFile -NoTypeInformation -Encoding UTF8
             $r.SignInPairs=$rows.Count
+            $r.SignInDistinctPaths=@($rows | ForEach-Object Path | Sort-Object -Unique).Count
             $authStart=$lo;$shellStart=$hi
             $r.AfterSignInPairs=@($reader.Pairs | Where-Object {$_.StartLocal -gt $hi}).Count
             if (!$rows.Count -and $r.AfterSignInPairs) {$r.Message='AMSP timed scans were recorded after Explorer started. Per-file timings during sign-in were not verified.'}
@@ -1090,6 +1302,15 @@ function Get-CaseEvidenceAssessment {
         $Metrics | Add-Member -NotePropertyName Pass -NotePropertyValue $PassName
         if ($Phase.RunId -and $Metrics.CollectionDurationStatus -ne 'Covered') {
             $Metrics.EvidenceGaps += 'The configured 900-second collection interval was not fully verified. See ObservedSpanSeconds and SamplesDuringReproduction.'
+        }
+        if ($Phase.LiveAMSP) {
+            $resultFile = "$Case\Trend\AMDebug\$PassName-Live-$($Phase.RunId)\Result.json"
+            try {
+                $watch = Get-Content -LiteralPath $resultFile -Raw -ErrorAction Stop | ConvertFrom-Json
+                if ($watch.RunId -ne $Phase.RunId -or $watch.Reason -ne 'StopRequested' -or !$watch.FinalActiveSaved -or @($watch.Errors).Count) {
+                    $Gaps.Add("$PassName live AMSP preservation reported a gap. Review its Result.json and raw snapshots.")
+                }
+            } catch { $Gaps.Add("$PassName live AMSP preservation has no verified completion record.") }
         }
         $MetricResults += $Metrics
         foreach ($Gap in $Metrics.EvidenceGaps) { $Gaps.Add("$PassName metrics: $Gap") }
@@ -1733,6 +1954,17 @@ function New-CaseArchive {
     if (Test-Path -LiteralPath (Join-Path $Case 'Cleanup\PhaseA-state.json')) {
         try { Read-CollectionState -Pass 'PassA' } catch { Write-Warning 'Collection state cannot be loaded; packaging will preserve evidence and flag unknown coverage.' }
     }
+    foreach ($phaseName in 'PassA','PassB') {
+        $path=Join-Path $Case ("Cleanup\Phase{0}-state.json" -f $phaseName.Substring(4))
+        if (Test-Path -LiteralPath $path) {
+            $owner=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($owner.LiveAMSP) {
+                $spec=Get-PassTaskSpec $owner $owner.TaskCasePath $phaseName WatchAMSP
+                $watch=Get-ScheduledTask -TaskPath '\' -TaskName $spec.Name -ErrorAction SilentlyContinue
+                if ($watch) { throw "Complete Finish or recovery for $phaseName before packaging the live AMSP files." }
+            }
+        }
+    }
     $SavedDebug = @(Get-ChildItem -LiteralPath "$Case\Trend\AMDebug" -Recurse -File -ErrorAction SilentlyContinue)
     if (-not $SavedDebug.Count -and $AmspDebug -and (Test-Path -LiteralPath $AmspDebug -PathType Container)) {
         try { Save-AMDebug -Label 'Package-RawDebug' }
@@ -1810,6 +2042,13 @@ function New-CaseArchive {
     } else {
         Write-Host "ARCHIVE INTEGRITY VERIFIED — REQUIRED ARTIFACTS VERIFIED ($($Files.Count) files). Root-cause/trace interpretation still requires review."
     }
+    foreach ($phaseName in 'PassA','PassB') {
+        $coverage = if ($phaseName -eq 'PassA') { $Assessment.SignInScans } else { $Assessment.PassBSignInScans }
+        if ($coverage) {
+            if ($null -eq $coverage.SignInPairs) { Write-Host "$phaseName AMSP sign-in coverage unverified." }
+            else { Write-Host "$phaseName authentication to Explorer: $($coverage.SignInPairs) paired scans across $($coverage.SignInDistinctPaths) paths; $($coverage.SignInScanStarts) scan starts." }
+        }
+    }
     Write-Host "ZIP: $Archive"
     Write-Host "SHA256: $Archive.sha256.txt"
     Write-Host 'Transfer both before Cleanup. Cleanup deletes C:\SWP-Perf, including archives there.'
@@ -1864,11 +2103,13 @@ function Invoke-PrepareB {
     if (!(Test-MetricsTaskAction $task $phaseA $Case PassA) -or $task.State -ne 'Disabled') { throw 'The Pass A task changed during preparation. Review recovery status.' }
     Unregister-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -Confirm:$false
     Register-MetricsTask PassB
+    if ($phaseA.NoAutoResume) { $NoAutoResume=$true }
+    Register-PassTasks 'PassB'
     $State.PreparationComplete = $true
     Save-State
     Write-Host 'Pass B prepared for metrics and persistent AM logging. WPR is not armed.'
     Write-Host 'MANUAL: Open Procmon as administrator, stop live capture, enable Options > Enable Boot Logging (no thread profiling), and close it.'
-    Write-Host (Get-ColdSignInInstructions $Case 'PassB')
+    Write-Host (Get-ColdSignInInstructions $State 'PassB')
     Write-Host 'After reproduction, save early debug. Open Procmon, save ALL PML segments under Case\Procmon, disable boot logging and exit.'
     Write-Host 'Run -Stage SaveDebug -Pass PassB promptly, then -Stage FinishB; run -Stage Package when ready.'
 }
@@ -2115,7 +2356,7 @@ function Get-CollectorView {
     $notesPass = 'PassA'
     $action = 'Prepare'
     $title = 'Ready for a new capture'
-    $message = 'Choose the sign-in scenario and affected account. Record the baseline and verify self-protection with the policy owner. For per-file timings after restart, arrange a second device for the administrator to check readiness before the user signs in.'
+    $message = 'Choose the sign-in scenario and affected account. Record the baseline and verify self-protection with the policy owner. For per-file timings after restart, wait two full minutes at the visible Windows sign-in screen, then sign in locally.'
     if (!$Installed) {
         $action = 'InstallTools'; $title = 'Install the collection tools'
         $message = 'Install from the complete extracted customer kit. The same PowerShell commands remain available after installation.'
@@ -2148,7 +2389,7 @@ function Get-CollectorView {
                 $action = 'Review'; $message = 'Pass B preparation was interrupted. Review status and use Recover Pass B to preserve the available evidence.'
             } elseif ($BootUtc -le (Parse-StateDateTime $phaseB.PreparedBoot).ToUniversalTime()) {
                 $action = 'Instructions'
-                $message = 'In Procmon, stop live capture, enable Options > Enable Boot Logging without thread profiling, then exit Procmon.' + [Environment]::NewLine + (Get-ColdSignInInstructions $dir 'PassB')
+                $message = 'In Procmon, stop live capture, enable Options > Enable Boot Logging without thread profiling, then exit Procmon.' + [Environment]::NewLine + (Get-ColdSignInInstructions $phaseB 'PassB')
             } elseif (!$phaseB.EarlyDebugSavedUtc) {
                 $action = 'SaveDebugB'
                 $message = 'As soon as the agreed sign-in or app delay ends, save the early Trend logs. Then open Procmon to save the boot capture.'
@@ -2178,10 +2419,14 @@ function Get-CollectorView {
             $action = 'Review'; $title = 'Interrupted capture'; $message = 'Review Status before choosing recovery. Recover and package keeps available evidence and reports coverage gaps.'
         } elseif ($phase.Scenario -eq 'Reboot' -and $BootUtc -le (Parse-StateDateTime $phase.PreparedBoot).ToUniversalTime()) {
             $action = 'Instructions'; $title = 'Prepared for restart'
-            $message = Get-ColdSignInInstructions $dir 'PassA'
+            $message = Get-ColdSignInInstructions $phase 'PassA'
         } else {
             $action = 'StopTrace'; $title = 'Capture armed'
-            $message = 'After the agreed sign-in and application milestone, stop the trace immediately. For a sign-out test, fully sign out and sign back in first.'
+            $message = if ($phase.Scenario -eq 'Reboot') {
+                'Windows has restarted. Click Stop trace now when your desktop responds or the agreed application is usable.'
+            } else {
+                'Fully sign out and sign back in. Click Stop trace now when your desktop responds or the agreed application is usable.'
+            }
         }
     }
     if ($prepareB) { $message += ' If support requested a Procmon repeat, choose Prepare Pass B in the action list before cleanup.' }
@@ -2211,7 +2456,16 @@ function New-CollectorWindow {
    <StackPanel Grid.Column="1"><Label Target="{Binding ElementName=Affected}" Padding="0" Content="Affected Windows account"/><TextBox Name="Affected" Padding="4"/></StackPanel>
   </Grid>
   <WrapPanel Grid.Row="2"><Button Name="Primary" Background="#204D70" Foreground="White" FontWeight="SemiBold"/><Button Name="Notes" Content="Open timing notes"/><Button Name="Refresh" Content="Refresh"/></WrapPanel>
-  <WrapPanel Grid.Row="3"><ComboBox Name="Other" Width="225" VerticalAlignment="Top" Margin="0,0,8,6" Padding="4"/><Button Name="RunOther" Content="Run selected action"/></WrapPanel>
+  <Grid Grid.Row="3" Name="ActionOptions">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
+    <ComboBox Name="Other" Width="266" VerticalAlignment="Top" Margin="0,0,8,6" Padding="4" AutomationProperties.Name="Additional action"/>
+    <Button Name="RunOther" Content="Run selected action" VerticalAlignment="Top"/>
+   </StackPanel>
+   <TextBlock Name="ActionDescription" Grid.Column="1" Foreground="#30475C" VerticalAlignment="Center" Margin="0,0,0,6"
+     AutomationProperties.Name="Selected action description" AutomationProperties.LiveSetting="Polite"/>
+  </Grid>
   <TextBlock Grid.Row="4" Name="ProgressLabel" Text="Action output" FontWeight="SemiBold" Margin="0,4,0,5"/>
   <TextBox Grid.Row="5" Name="Output" IsReadOnly="True" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
     VerticalScrollBarVisibility="Auto" Padding="7" Background="White"/>
@@ -2232,7 +2486,7 @@ function Show-CollectorWindow {
     param([string]$RequestedCase, [string]$SourcePath = $PSCommandPath)
     $window = New-CollectorWindow
     $controls = @{}
-    foreach ($name in 'Title','Identity','CasePath','Instruction','Setup','Scenario','Affected','Primary','Notes','Refresh','Other','RunOther','ProgressLabel','Output') {
+    foreach ($name in 'Title','Identity','CasePath','Instruction','Setup','Scenario','Affected','Primary','Notes','Refresh','Other','RunOther','ActionDescription','ProgressLabel','Output') {
         $controls[$name] = $window.FindName($name)
     }
     $ui = @{ Job=$null; Script=$SourcePath; Case=$null; Action=$null; Requested=$RequestedCase }
@@ -2244,6 +2498,33 @@ function Show-CollectorWindow {
         RecoverAndPackage='Recover and package'; RestoreTrace='Restore trace settings'; Restore='Restore settings and keep evidence'
         Delete='Delete all local cases'
     }
+    $helpByLabel = @{
+        ($labels.Status) = 'View progress for this case, its recording and its tasks. Collection continues.'
+        ($labels.RecoverAndPackage) = 'Use if Pass A was interrupted. Save remaining evidence and create a ZIP for this case.'
+        ($labels.RestoreTrace) = 'Restore the agent trace settings saved for this case. The agent may restart. Use after the measurement.'
+        ($labels.Restore) = 'Restore settings for all local cases. This can end an active capture. Keep the case files on disk.'
+        ($labels.Delete) = 'Delete every case under C:\SWP-Perf after handoff checks and confirmation. Keep installed tools and external handoffs.'
+        ($labels.Package) = 'Create a verified ZIP and checksum for this case. Packaging can request or resume its native diagnostic.'
+        ($labels.Diagnostics) = 'Resume a pending native agent diagnostic or request a fresh one for this case.'
+        ($labels.PrepareB) = 'Prepare this case for an optional Procmon reboot capture. Follow the boot logging instructions before restarting.'
+        ($labels.RecoverB) = 'Use if Pass B was interrupted. Preserve available evidence and package both passes for this case.'
+    }
+    $controls.Other.Add_SelectionChanged({
+        $selected=[string]$controls.Other.SelectedItem
+        $controls.ActionDescription.Text=if ($selected) { $helpByLabel[$selected] } else { '' }
+    })
+    $window.Add_SizeChanged({
+        $hint=$controls.ActionDescription
+        if ($window.ActualWidth -lt 740) {
+            [Windows.Controls.Grid]::SetRow($hint,1)
+            [Windows.Controls.Grid]::SetColumn($hint,0)
+            [Windows.Controls.Grid]::SetColumnSpan($hint,2)
+        } else {
+            [Windows.Controls.Grid]::SetRow($hint,0)
+            [Windows.Controls.Grid]::SetColumn($hint,1)
+            [Windows.Controls.Grid]::SetColumnSpan($hint,1)
+        }
+    })
     $controls.Affected.Text = [string](Get-CimInstance Win32_ComputerSystem).UserName
     $admin = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
@@ -2448,6 +2729,7 @@ function Invoke-Prepare {
         Scenario = $Scenario
         CasePath = $Case
         AffectedUser = $AffectedUser
+        NoAutoResume = [bool]$NoAutoResume
         WprBuffers = $WprBuffers
         PreparedBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
         AmspDebug = $AmspDebug
@@ -2518,6 +2800,7 @@ function Invoke-Prepare {
     Get-Item -LiteralPath $DebugLog.FullName | Select-Object FullName, Length, LastWriteTimeUtc | Format-List | Out-File "$Case\Trend\AMDebug-enabled.txt"
     @(Get-OriginalDebugValues) | ConvertTo-Json | Set-Content -LiteralPath "$Case\Cleanup\PersistentAMTrace\Registry-applied.json" -Encoding UTF8
     Register-MetricsTask 'PassA'
+    Register-PassTasks 'PassA'
     # No automatic cancellation: an already scheduled trace must be reviewed first.
     if ($Scenario -eq 'SignOutSignIn') { Confirm-WarmScanControl }
     $verb=if ($Scenario -eq 'Reboot') {'-boottrace -addboot'} else {'-start'}
@@ -2532,12 +2815,13 @@ function Invoke-Prepare {
     $State.Armed = $true
     Save-State
     if ($Scenario -eq 'SignOutSignIn') {
+        Start-ScheduledTask -TaskName (Get-PassTaskSpec $State $Case 'PassA' 'WatchAMSP').Name -TaskPath '\'
         Start-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\'
         Write-Host 'Prepared. Fully sign out and sign back in now. Run StopTrace at the agreed desktop or application milestone.'
         return
     }
     Write-Host 'Prepared. Focused boot WPR, persistent AM debug and DSA metrics are armed.'
-    Write-Host (Get-ColdSignInInstructions $Case 'PassA')
+    Write-Host (Get-ColdSignInInstructions $State 'PassA')
     Write-Host 'Immediately afterward run SWP-Perf.ps1 -Stage StopTrace, then -Stage FinishAndPackage. Do not wait for metrics before StopTrace.'
     return
 }
@@ -2554,6 +2838,7 @@ function Invoke-StopTrace {
     Save-State
     $EarlySaved = $false
     $snapshot=$null
+    try { Request-WatchStop $State $Case } catch { Write-Warning "AMSP watcher stop signal failed: $_" }
     try { $snapshot=Start-EarlySnapshot; $null=$snapshot.Handle }
     catch {
         $_ | Out-String | Set-Content -LiteralPath "$Case\WPR\Early-debug-copy-error.txt" -Encoding UTF8
@@ -2647,6 +2932,7 @@ function Invoke-Finish {
         }
     }
 if (!$Recovery -and $Pass -eq 'PassA' -and -not $State.TraceSaved) { throw 'Run -Stage StopTrace immediately after the measured reproduction first.' }
+Remove-PassTasks $State $Case $Pass
 $Deadline = (Get-Date).AddMinutes(46)
 do {
     $Task = Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction SilentlyContinue
@@ -2855,6 +3141,15 @@ if($Task){
     Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
     Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false
 }
+foreach ($entry in $cases) {
+    foreach ($phase in 'PassA','PassB') {
+        $path = Join-Path $entry.FullName ("Cleanup\Phase{0}-state.json" -f $phase.Substring(4))
+        if (Test-Path -LiteralPath $path) {
+            $owner = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            Remove-PassTasks $owner $entry.FullName $phase
+        }
+    }
+}
 # Only cancel a recording that this case root successfully armed and did not save.
 # Without that ownership record, leave WPR alone rather than cancel another activity.
 $OwnedRecordings = @()
@@ -3009,7 +3304,7 @@ if ($Stage -eq 'Gui' -and !(Test-CollectorDesktop)) {
 $gate = $null
 $held = $false
 try {
-    if ($Stage -notin 'Help','Gui','Status','CaptureMetrics','SaveDebug' -or ($Stage -eq 'SaveDebug' -and $Pass -eq 'PassB')) {
+    if ($Stage -notin 'Help','Gui','Status','CaptureMetrics','WatchAMSP','ResumeGui','SaveDebug' -or ($Stage -eq 'SaveDebug' -and $Pass -eq 'PassB')) {
         $gate = [Threading.Mutex]::new($false,'Global\SWP-Perf-Operator')
         try { $held = $gate.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
         if (!$held) { throw 'Another collector action is in progress. Run Status or wait for it to finish.' }
@@ -3022,7 +3317,7 @@ try {
     'Help' {
         Write-Host 'Open the script on the desktop for the GUI. All explicit collection stages run directly from PowerShell.'
         Write-Host 'Prepare allocates the next CASE number. Later stages resolve the active case; use -Case for an explicit path.'
-        Write-Host 'Prepare -> restart -> for per-file timings, hold at sign-in and run CheckSignInReady remotely -> sign in/reproduce -> StopTrace -> FinishAndPackage.'
+        Write-Host 'Prepare -> restart -> wait two minutes at the visible sign-in screen -> sign in locally -> StopTrace -> FinishAndPackage. Add -NoAutoResume to Prepare for CLI-only use.'
         Write-Host 'Other actions: InstallTools, Finish, Diagnostics, Package, Status, PrepareB, SaveDebug -Pass PassB, FinishB, RestoreTrace, CollectContext, Cleanup.'
         Write-Host 'Keep this script in C:\Program Files\SWP-PerfTools. Extract the DSA CMD package first; handle self-protection in the console.'
         Write-Host 'Cleanup deletes ALL C:\SWP-Perf, including archives there. Transfer ZIP and SHA256 first.'
@@ -3037,6 +3332,8 @@ try {
         try { Install-CollectorShortcut } catch { Write-Warning "CLI tools installed. Start menu shortcut unavailable: $_" }
     }
     'CaptureMetrics' { Invoke-MetricsWorker }
+    'WatchAMSP' { Invoke-AMSPWatcher }
+    'ResumeGui' { Invoke-ResumeGui }
     'Prepare' { Invoke-Prepare }
     'CheckSignInReady' { Confirm-ColdSignInReady $Pass }
     'StopTrace' { Invoke-StopTrace }
@@ -3050,6 +3347,7 @@ try {
         if ($Pass -eq 'PassB') {
             if ($State.Finished -or $State.PreparationComplete -eq $false) { throw 'Pass B is not ready for an early snapshot.' }
             Set-PassBReproductionEnd 'EarlySnapshot'
+            Request-WatchStop $State $Case
         }
         Save-AMDebug -Label "$Pass-Early"
         if ($Pass -eq 'PassB') {

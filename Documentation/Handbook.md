@@ -19,14 +19,14 @@ DSA means Deep Security Agent. AMSP is the Trend anti-malware component. Windows
 
 **What to distribute.** Send `SWP-Customer-Kit.zip` with its matching `.sha256.txt`. After testing, the customer returns a different file named `AllEvidence-CASE-…zip` and its checksum. Use the Markdown runbook or handbook source when copying commands. The administrator owns the transfer. The installed collector writes to local storage.
 
-**Edition.** Collector and handbook dated 26 November 2026. The preceding collection engine was tested on Windows 11 build 22631, Windows PowerShell 5.1, agent core 20.0.3-31610 and DSA Support Tool 1.0.0.1203. Confirm compatibility with the Windows and agent builds on the affected endpoint. See `Validation-summary.json` for the test results.
+**Edition.** Collector and handbook dated 26 November 2026. The preceding collection engine was tested on Windows 11 build 22631, Windows PowerShell 5.1, agent core 20.0.3-31610 and DSA Support Tool 1.0.0.1203. The lab and customer builds discussed here are both in the 20.0.3.* family. Verify scan coverage in each case. See `Validation-summary.json` for the test results.
 
 ## Participant instructions
 
 **What you will do.** Use the sign-in timing agreed with IT. Record when you enter your credentials and when your desktop responds. You can do this with your usual account and permissions.
 
 1. Save your work and close anything you would lose on sign-out or restart. Agree with IT which application to open, if any, and what “ready” means. For example, the desktop accepts a click or the application opens the document you normally use.
-2. Stay signed in until IT says recording is ready. If IT asks for **sign-out**, select **Start → account → Sign out**, then sign back in to the same account. If IT asks for **restart**, select **Start → Power → Restart**, then follow the agreed timing. **For per-file scan timings, stay at the sign-in screen until IT gives you the go-ahead.** If IT asked for your usual immediate sign-in, sign in at your normal pace. Locking the screen or closing a Remote Desktop window leaves the old session in place.
+2. For a full sign-out test, select **Start → account → Sign out**, then sign back in. For a reboot test, select **Start → Power → Restart**. **When the Windows sign-in screen first appears, wait two full minutes, then sign in locally.** Use your normal timing if the case specifically calls for an immediate sign-in.
 3. Note the local time when you submit your credentials and when the desktop responds. If an application is part of the test, launch it once and note when you click it and when it becomes usable. For a sign-in-only test, leave applications closed.
 4. Tell IT **desktop ready** or **application ready** as soon as you reach the agreed point. Report an error, timeout or a run that felt normal. Include seconds when you could observe them. If you only know the minute, say so.
 
@@ -51,7 +51,7 @@ Keep passwords, PINs and authentication codes private. IT may collect process na
 | Question | Choice |
 |---|---|
 | Is full sign-out sufficient to reproduce it? | Choose `SignOutSignIn`. Keep the computer on. WPR runs machine-wide and the SYSTEM metrics task starts before sign-out. |
-| Does the delay require a fresh boot? | Choose `Reboot`. Agree on timing before restart. For per-file scans, hold at the sign-in screen for a verified scan. To measure the usual immediate sign-in, use the user’s normal timing. |
+| Does the delay require a fresh boot? | Choose `Reboot`. For per-file evidence, wait two minutes from the visible sign-in screen. For an immediate reproduction, use normal timing and label the run. |
 | Is sign-in the only symptom? | End at usable desktop. Set `Applications` to `[]` in the case notes. |
 | Is an app slow on first launch? | Include the agreed launch in the same recording and stop when it becomes usable. |
 | Does support need Procmon stacks or additional I/O detail? | Finish Pass A first. Use the optional Procmon repeat only for that outstanding question. |
@@ -122,7 +122,7 @@ $cmdLog = Join-Path $env:ProgramFiles 'SWP-PerfTools\DSASupportTool\logs\DSA_Sup
 Get-Content -LiteralPath $cmdLog -Tail 30
 ```
 
-**First sign-in after restart.** For per-file timings, arrange a second device before reboot. Keep the participant at the sign-in screen. Through an elevated noninteractive management session on the restarted PC, run the case-specific `CheckSignInReady` command shown in the GUI. At **READY TO SIGN IN**, give the go-ahead. If there is no pair, retry or record unverified coverage and finish or recover. Record the hold separately from credential-to-desktop time. A fixed delay or a running service cannot confirm a scan. For the usual immediate sign-in, keep normal timing and label the run.
+**First sign-in after restart.** Wait two full minutes from the visible Windows sign-in screen, then sign in locally. Record the wait separately from credential submission and desktop readiness. The collector reopens once for the administrator who prepared the case. Use `-NoAutoResume` at Prepare for a CLI-only run. At handoff, check the actual sign-in pair count and paths. A usual immediate sign-in remains available for a separate comparison.
 
 If preparation fails, retain the case and follow “Recover an interrupted capture”.
 
@@ -141,9 +141,9 @@ $user = Read-Host 'Enter the account printed by whoami on your normal desktop'
 & $swp -Stage Prepare -Scenario SignOutSignIn -AffectedUser $user
 ```
 
-**3. Reproduce.** After **Prepared**, sign out and back in for a same-boot test. For per-file timings after restart, stay at the sign-in screen. From a second device, run the **CheckSignInReady** command shown by the collector in an elevated remote shell on this PC. Sign in at **READY TO SIGN IN**. For the usual immediate sign-in, use normal timing. Record credential submission, usable desktop and any agreed app launch/ready times.
+**3. Reproduce.** After **Prepared**, follow the selected scenario. For **SignOutSignIn**, fully sign out and sign back in. For **Reboot**, restart Windows, wait **two full minutes** from the moment the sign-in screen appears, then sign in locally. For an immediate comparison, use your usual timing and note that choice. Record credential submission, usable desktop and any agreed application launch/ready times.
 
-**4. Stop immediately.** Reopen the collector and click **Stop trace now**, or open a **new elevated Windows PowerShell**. The previous window and its variables are gone. Run these lines before waiting for metrics. Note any delay opening the elevated window.
+**4. Stop at the milestone.** After reboot, the collector reopens for the local administrator who prepared the case. Click **Stop trace now** when the desktop or agreed application responds. If the window is closed, use the Start shortcut or run these commands in a new elevated PowerShell.
 
 ```powershell
 $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'
@@ -239,11 +239,11 @@ Write-Host 'Received ZIP matches the supplied SHA-256.'
 $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'
 & $swp -Stage Cleanup -KeepEvidence
 Get-Service ds_agent, Amsp | Select-Object Name, Status
-Get-ScheduledTask -TaskName 'SWP-Perf-DSAMetrics' -TaskPath '\' -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskName 'SWP-Perf-*' -TaskPath '\' -ErrorAction SilentlyContinue
 wpr.exe -status
 ```
 
-Expect both Trend services to run and the temporary task to be absent. Verify the case’s WPR session ended. An unrelated WPR recording belongs to its owner. If Procmon was used, turn off its boot logging in the GUI and exit. The policy administrator separately restores and verifies the computer’s original protection and inheritance. Record the result. An original INI that requested debugging will still request it after restoration.
+Expect both Trend services to run and the case-owned tasks to be absent. Verify the case’s WPR session ended. An unrelated WPR recording belongs to its owner. If Procmon was used, turn off its boot logging in the GUI and exit. The policy administrator separately restores and verifies the computer’s original protection and inheritance. Record the result. An original INI that requested debugging will still request it after restoration.
 
 **Package the closure record.** Retained cleanup writes the final Defender and SysMain observations to `Cleanup\Collector-closed.json`. For CASE-01, run `& $swp -Stage Package -Case 'C:\SWP-Perf\CASE-01'` and transfer the newest ZIP and checksum. Substitute the actual case path. Before deleting the case root, Cleanup verifies each case against its external handoff. Use `-ArchiveDirectory` for moved handoffs.
 
@@ -341,8 +341,8 @@ The default publication wait permits 600 seconds without progress and has an ove
 Use the optional repeat when support needs Windows file operations from a separate restart. Allow space for the PML files and the combined ZIP. Obtain a compatible Process Monitor build. [Microsoft Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 
 1. Finish A and confirm trace settings were restored. Before cleanup, coordinate self-protection with the policy owner. Select **Prepare Pass B** in the action list, click **Run selected action** and confirm.
-2. Open Procmon as administrator, stop live capture and choose **Options → Enable Boot Logging** without thread profiling. Close Procmon and restart. For delayed sign-in, have the administrator verify `CheckSignInReady -Pass PassB` before credentials. Repeat the agreed timing and launches.
-3. At the agreed milestone, reopen the collector and click **Save Pass B early logs**. In Procmon save every PML segment in the displayed case’s `Procmon` folder. Turn off boot logging and exit Procmon.
+2. Open Procmon as administrator, stop live capture and choose **Options → Enable Boot Logging** without thread profiling. Close Procmon and restart. For delayed sign-in, wait two minutes from the visible sign-in screen before entering credentials. Repeat the agreed timing and launches.
+3. At the agreed milestone, use the reopened collector to click **Save Pass B early logs**. In Procmon save every PML segment in the displayed case’s `Procmon` folder. Turn off boot logging and exit Procmon.
 4. Select **Open Pass B timing notes** and enter B’s actual times. Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` for B’s scan coverage, PML integrity and event exports.
 
 ```powershell
@@ -365,7 +365,7 @@ Use one `-Stage` per command (`-Action` is an alias). Both GUI and CLI use the s
 | `Gui`, `Help` | Open the administrator window or print a workflow summary. |
 | `InstallTools` | Run from the extracted kit. Installs the two verified vendor bundles, the collector and both WPR profiles into Program Files. |
 | `Prepare` | Creates a fresh case, backups, temporary config and an owned metrics task. Arms the requested WPR scenario. Wait for Prepared. |
-| `CheckSignInReady` | After restart, run through an elevated management session while the user waits. Give the go-ahead after a fresh paired test scan. |
+| `WatchAMSP`, `ResumeGui` | Internal tasks preserve rotated logs and reopen the reboot case in the preparing administrator’s session. |
 | `StopTrace` | After the milestone, starts a raw AMSP snapshot, saves the owned WPR ETL, records quality and attempts to correlate the sign-in. |
 | `Finish` | Retrieves Pass A evidence, requests diagnostics unless skipped, exports events and attempts trace restoration. Use Package separately. |
 | `FinishAndPackage` | Runs Finish for Pass A, then creates the verified full-case archive. |
@@ -445,6 +445,8 @@ Values below are the defaults of the released collector. PowerShell variables de
 | Process Monitor and WPR | `enableProcMon=0`, `enableChangeAltitude=0` and `enableWPR=0`. Both tool timers are 10 seconds. The script operates WPR independently. |
 | Network Packet Capture and Network Check | `enableNetPCap=0`, `timerInSecondNetPCap=10`, `enableNetCheck=0` and an empty `URL2NetCheck`. |
 
+**Live log preservation.** During the run, the watcher checks for newly rotated AMSP files every two seconds. At the stop signal it also copies the active file. Review the pass-specific live folder, final result and copy errors.
+
 **Persistent agent tracing.** The script backs up `%SystemRoot%\ds_agent.ini` if present, records absence if applicable, and merges `AM,AMSP,dsp.am.*` into a supported single Trace directive. A wildcard already covers those tokens. It checks encoding and refuses ambiguous formats. The INI persists through reboot. The CMD tool’s `enableAMSP=0` does not disable this separately requested agent trace. [Trend AM debug procedure](https://success.trendmicro.com/en-US/solution/KA-0004561)
 
 See `Documentation/DSTool-collection.example.json` for a full applied JSON example for the bundled build. Prepare reads and updates the installed vendor file.
@@ -487,3 +489,21 @@ The harness imports functions without running the production dispatcher. It exer
 **For a documentation release**, compare the shipped script, WPR profiles and pinned vendor binaries with the tested release. Verify all paths and command examples against the script. Build the distribution with `Developer/build_kit.py` as described in `Developer/README.md`. Verify the external checksum after transfer. Share only the distribution and its checksum with the endpoint operator.
 
 **Further reference.** The kit’s primary evidence is its released script and `Validation-summary.json`. Official product references are available from [Trend DSA Support Tool](https://success.trendmicro.com/en-US/solution/KA-0012444), [Trend native agent commands](https://help.deepsecurity.trendmicro.com/20_0/on-premise/command-line-interface.html) and [Microsoft WPR command reference](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options).
+
+## Actions in the collector window
+
+The main button shows the next normal step. For a reboot capture, click **Stop trace now** when the desktop or agreed application responds. For an interrupted capture or another action, open the drop-down. Selecting an item displays its description beside the buttons or below them on a narrow window. Only **Run selected action** starts the selected operation.
+
+| Menu label | Purpose and scope |
+|---|---|
+| **Show status** | Inspect the current case, its recording and tasks. Collection continues. |
+| **Recover and package** | Salvage an interrupted Pass A and package the current case with identified evidence gaps. |
+| **Restore trace settings** | Restore the agent trace settings saved for this case. The agent may restart. Use after measurement. |
+| **Restore settings and keep evidence** | Restore settings and remove collector tasks across all local cases. This can end an active capture. All case files stay on disk. |
+| **Delete all local cases** | After external handoff checks and confirmation, restore settings and delete everything under `C:\SWP-Perf`. Installed tools and external handoffs are retained. |
+| **Package case** | Create a verified ZIP and checksum for this case. Packaging may request or resume its native diagnostic. |
+| **Resume or request diagnostic** | Resume the pending native agent diagnostic or request a fresh one for this case. |
+| **Prepare Pass B** | Arm the optional Procmon repeat for this case. Follow the boot logging instructions before restarting. |
+| **Recover Pass B and package** | Salvage the interrupted second pass and package both passes for this case. |
+
+**Windows Task Scheduler.** The background entries are separate from these menu actions. `SWP-Perf-DSAMetrics` runs the DSA CMD collector. `SWP-Perf-WatchAMSP-<run ID>` preserves rotated AMSP logs. `SWP-Perf-ResumeGui-<run ID>` reopens the prepared reboot case once for the local administrator. The launch time is in `Cleanup\<pass>-GUI-launch.json`. Finish or recovery retires the pass-specific tasks. Cleanup also removes the owned DSA metrics task.

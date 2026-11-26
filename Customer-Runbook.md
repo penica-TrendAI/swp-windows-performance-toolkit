@@ -6,7 +6,7 @@
 
 For role-specific instructions, see the [full handbook](Documentation/SWP-Perf-Handbook.pdf). Give the person signing in the [one-page participant instructions](Documentation/Participant-sheet.pdf). When the affected user is also a local administrator, use the [solo administrator checklist](Documentation/Administrator-participant.pdf) or its [copyable commands](Documentation/Administrator-participant.md). Developers can start with the [maintenance guide](Developer/README.md).
 
-Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI Vision One Server & Workload Protection / Deep Security Agent already installed. It collects the slow reboot, sign-in and first application launches in one pass. The scheduled Trend CMD tool samples agent metrics every five seconds for 15 minutes after initialization. The task has a 45-minute cap. WPR captures Windows file I/O and process starts. The script separately checks whether AMSP logged paired per-file scan timings during sign-in. An immediate sign-in in the lab had no paired scan records between authentication and Explorer. A delayed first sign-in captured them once a fresh test-file scan was confirmed before credentials. If the delay also occurs after signing out, the same-boot scenario provides a second way to measure it.
+Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI Vision One Server & Workload Protection / Deep Security Agent already installed. It collects the slow reboot, sign-in and first application launches in one pass. The scheduled Trend CMD tool samples agent metrics every five seconds for 15 minutes after initialization. The task has a 45-minute cap. WPR captures Windows file I/O and process starts. The script separately checks whether AMSP logged paired per-file scan timings during sign-in. An immediate sign-in in the lab had no paired scan records between authentication and Explorer. In a separate lab run, waiting two minutes at the sign-in screen produced 218 paired scan timings across 211 paths between authentication and Explorer. The handoff assesses coverage for each run. If the delay also occurs after signing out, the same-boot scenario provides a second way to measure it.
 
 ## 1. Set up on the affected computer
 
@@ -41,13 +41,29 @@ After installation, open **SWP Performance Collector** from the Windows Start me
 | When | Collector window | Command line |
 |---|---|---|
 | Before measuring | Confirm the affected account and scenario. Click **Prepare new capture** and wait for **Prepared**. | `& $swp -Stage Prepare -Scenario Reboot`, or choose `SignOutSignIn`. Add `-AffectedUser` for the agreed account. |
-| At the sign-in screen after restart | For per-file timings, the participant waits. Copy the case-specific command shown in the window before reboot. | From another device, run `& $swp -Stage CheckSignInReady` on the endpoint and give the go-ahead at **READY TO SIGN IN**. |
-| At the agreed sign-in or app milestone | Reopen the shortcut. Check the affected account and case, then **Stop trace now**. | `& $swp -Stage StopTrace` |
+| At the sign-in screen after restart | Wait **two full minutes** from when the Windows sign-in screen first appears, then sign in locally. The collector reopens for the same administrator. | The same two-minute wait applies. Use `-NoAutoResume` with Prepare for a CLI-only capture. |
+| At the agreed sign-in or app milestone | Click **Stop trace now** in the collector. If the window is closed, open **SWP Performance Collector** from Start. | `& $swp -Stage StopTrace` |
 | After the trace is saved | Use **Open timing notes**, save the times, then **Finish and package**. Keep the window open and watch the action output. | Complete the notes and run `& $swp -Stage FinishAndPackage`. |
 | After handoff | **Open handoff folder**. Transfer the ZIP and checksum. Select **Restore settings and keep evidence**. | `& $swp -Stage Cleanup -KeepEvidence` |
 | If interrupted | Choose **Show status**, read the saved state and follow the recovery section. | `& $swp -Stage Status`. All recovery, optional Pass B and advanced switches remain available. |
 
-GUI and CLI can be mixed within a run. A window does not open automatically during sign-in. Explicit collection, packaging, scheduled-task and cleanup stages run directly. Automated sessions should supply their stage. With no stage, a headless Windows session displays Help.
+GUI and CLI can be mixed within a run. For a reboot case, the window reopens once when the preparing administrator signs in to the affected account. A different account or a CLI-only capture can resume manually. Explicit collection, packaging, scheduled-task and cleanup stages run directly. Automated sessions should supply their stage. With no stage, a headless Windows session displays Help.
+
+### Actions in the collector window
+
+During a normal reboot capture, use the main **Stop trace now** button at the agreed milestone. The drop-down offers additional actions according to the case state. Selecting an entry only highlights it. Read the description beside the menu, or below it on a narrow window. Click **Run selected action** to execute it.
+
+| Exact menu label | When to use it and what it affects | PowerShell equivalent |
+|---|---|---|
+| **Show status** | Inspect the current case, WPR and task state. Safe while collection is running. | `-Stage Status` |
+| **Recover and package** | An interrupted Pass A cannot finish normally. Collect surviving logs and events, attempt restoration and package the selected case with any gaps identified. | `-Stage RecoverAndPackage -Pass PassA` |
+| **Restore trace settings** | End temporary agent tracing for the selected case and restore its saved INI state. The agent can restart. Use after the measured window. Other collection settings and case files are retained. | `-Stage RestoreTrace` |
+| **Restore settings and keep evidence** | After handoff or during approved cleanup, restore saved settings and retire owned tasks across **all local cases**. Leaves case folders and their contents on disk. | `-Stage Cleanup -KeepEvidence` |
+| **Delete all local cases** | After verifying the external handoffs, restore settings and delete **everything under `C:\SWP-Perf`**. The GUI asks for confirmation. Installed tools and external handoffs are retained. | `-Stage Cleanup` |
+| **Package case** | Create a verified handoff ZIP for the selected case. If needed, packaging can request or resume the native diagnostic. | `-Stage Package` |
+| **Resume or request diagnostic** | Resume the selected case’s pending native agent diagnostic or request a fresh one. | `-Stage Diagnostics` |
+| **Prepare Pass B** | After Pass A finishes and before cleanup, arm an optional Procmon repeat for the same case. Enable Procmon boot logging as instructed. | `-Stage PrepareB` |
+| **Recover Pass B and package** | Salvage an interrupted Pass B and package both passes for the selected case. | `-Stage RecoverAndPackage -Pass PassB` |
 
 ## 2. Record the baseline and prepare Phase A
 
@@ -77,19 +93,16 @@ Substitute the actual interactive account. The script verifies a signed Windows 
 
 ### First sign-in after a restart
 
-**If the goal is per-file scan timings, use the delayed first sign-in directly.** Before restarting, agree how the administrator will contact the participant and confirm access to an elevated, noninteractive PowerShell session on the endpoint from another device. Arrange a manual first sign-in for this run. The administrator can also be the participant. Copy the command for the prepared case from the collector window or its action output before closing it.
+1. Prepare the case while signed in as the local administrator who will reproduce the issue. Save work and choose **Restart**. Ensure this is a manual sign-in so the credential screen can be held.
+2. **When the Windows sign-in screen first appears, wait two full minutes, then sign in locally.** For a case specifically investigating the usual immediate sign-in, sign in at the usual pace and label the run **immediate**.
+3. The collector reopens once in the preparing administrator's desktop session. At the agreed desktop or application milestone click **Stop trace now** for Pass A, or **Save Pass B early logs** for Pass B. Use the Start shortcut if the window is closed. An explicit `-NoAutoResume` on Prepare keeps the workflow CLI-only.
+4. Record the timing choice and screen-visible time in `Test-notes.txt`, then enter the credential and usable-desktop times in `Operator-notes.json`. Keep the pre-credential wait separate. The launch timestamp, session and process ID of the reopened GUI are in `Cleanup\<pass>-GUI-launch.json`.
 
-1. **Participant:** Restart Windows and stay at the sign-in screen. Enter your credentials when the administrator gives the go-ahead.
-2. **Administrator:** While the screen is held, run the command below **on the restarted endpoint** through the existing management connection. A console or Remote Desktop sign-in would consume the first sign-in. This example selects the active case and Pass A. For a Procmon repeat, use `-Pass PassB`.
+**What the two minutes establish.** On a Windows 11 lab machine running DSA 20.0.3-31610, the delayed sign-in produced 218 scans across 211 paths entirely between authentication and Explorer startup. The customer build 20.0.3.29020 belongs to the same 20.0.3.* family. Evidence assessment verifies the actual sign-in coverage for each capture.
 
-   ```powershell
-   $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'
-   & $swp -Stage CheckSignInReady -Pass PassA
-   ```
-3. At **READY TO SIGN IN**, tell the participant to sign in. The check copied and launched a uniquely named, signed Windows executable and found its matching scan start and completion in this boot's AMSP logs. Trace activity, a running service or a fixed wait cannot establish that result. A check that finds no pair can be retried while the participant waits. If the check is unavailable or keeps failing, agree whether to finish with unverified coverage or use recovery. Record that decision.
-4. Record the timing choice, reboot and go-ahead in `Test-notes.txt`. Enter credential submission and usable desktop separately in `Operator-notes.json`. The hold allows startup work to finish and can change the symptom. When the objective is the user's usual immediate sign-in, have them sign in at their normal pace and label that run **immediate**. Use the finished case's sign-in coverage assessment to determine which scans were captured during either run.
+**How the script preserves AMSP logs.** Windows schedules a separate background task at startup, or starts it at Prepare for a same-boot capture. Actual startup can lag boot. The watcher’s `StartUtc.txt` records when it began, and its first sweep includes retained rotations modified since this boot. Every two seconds it checks for newly rotated `Amsp_LocalDebugLog.<n>.log` files. It saves each observed version in `Trend\AMDebug\<pass>-Live-<run ID>`. At the stop signal it also captures the active file. The existing early and final snapshots still collect the general agent logs. The watcher stops after 45 minutes if no stop signal arrives and reserves 1 GiB of free space when copying. Check `Result.json` and any `Copy-errors.txt` in the live folder. A generation reused between checks can still be missed.
 
-The check records its result under `Trend\<pass>-Cold-signin-control.json`. Its test executable is identifiable by its `ScanControl-` directory. Keep the control separate from application scans when interpreting timings.
+At handoff, review `SignInScans` or `PassBSignInScans` in `Evidence-assessment.json`. `SignInScanStarts` counts observed starts, `SignInStartPaths` counts their distinct paths, and `SignInPairs` counts scans that both started and finished before Explorer appeared. The per-pass `Trend\<pass>-SignIn-scan-starts.csv` includes starts with missing or later completions. An unverified sign-in window has no verified count.
 
 ## 3. Reproduce and save the trace
 
@@ -199,8 +212,8 @@ Finish Pass A and keep the case open. Do this **before Cleanup**, including Clea
 |---|---|
 | After Pass A | Select **Prepare Pass B** in the action list, click **Run selected action** and confirm. Wait for preparation to finish. |
 | Before restart | Open Procmon as administrator, stop live capture, enable **Options → Enable Boot Logging** without thread profiling, then exit Procmon and restart Windows. |
-| At the sign-in screen | For per-file timings, hold for the administrator’s **READY TO SIGN IN** from `CheckSignInReady -Pass PassB`. For an immediate-sign-in comparison, repeat the timing used for Pass A. |
-| At the agreed milestone | Repeat the agreed launches. As soon as the delay ends, reopen the collector and click **Save Pass B early logs**. This records the end time and preserves the available AMSP rotations. |
+| At the sign-in screen | Wait two full minutes from the visible sign-in screen for per-file timings. For an immediate comparison, repeat the timing used for Pass A. |
+| At the agreed milestone | Repeat the agreed launches. As soon as the delay ends, click **Save Pass B early logs** in the reopened collector. This records the end time and preserves the available AMSP rotations. |
 | Before finishing | Open Procmon as administrator. Save **every PML segment** into the displayed case’s `Procmon` folder, turn off boot logging and exit Procmon. Use **Open Pass B timing notes** for this repeat’s credential, desktop and application times. |
 | Handoff | Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` in the new combined ZIP. Pass A event logs are in `Events`, Pass B in `Events\PassB`. Packaging checks the names, sizes and hashes of the PML files present at finish. |
 | If interrupted | Turn off boot logging and close Procmon. Choose **Recover Pass B and package** to retrieve available evidence even if you could not save a PML. Inspect the reported gaps. |

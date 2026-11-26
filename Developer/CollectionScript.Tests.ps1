@@ -110,8 +110,9 @@ try {
             Assert-True ((Get-CollectorView $null $true $boot).Action -eq 'Prepare') 'Prepare missing'
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Instructions') 'Stop offered before restart'
             $message = (Get-CollectorView $entry $true $boot).Message
-            Assert-True ($message.Contains('stay at the sign-in screen') -and $message.Contains("-Stage CheckSignInReady -Pass PassA -Case '$dir'")) 'Missing Pass A participant or administrator instruction'
-            Assert-True ((Get-CollectorView $entry $true $boot.AddMinutes(1)).Action -eq 'StopTrace') 'Stop missing'
+            Assert-True ($message.Contains('wait two full minutes') -and $message.Contains('sign in locally') -and !$message.Contains('CheckSignInReady') -and $message.Contains('Stop trace now')) 'Missing Pass A participant or administrator instruction'
+            $after=Get-CollectorView $entry $true $boot.AddMinutes(1)
+            Assert-True ($after.Action -eq 'StopTrace' -and !$after.Message.Contains('sign out')) 'Wrong instruction on the reboot screen'
             '{"Saved":false}'|Set-Content "$dir\WPR\Trace-quality.json"
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Review') 'Failure hidden'
             $phase.TraceSaved=$true
@@ -128,7 +129,7 @@ try {
             $b.PreparationComplete=$true; $b|ConvertTo-Json|Set-Content $bp
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Instructions') 'B offered premature finish'
             $message = (Get-CollectorView $entry $true $boot).Message
-            Assert-True ($message.Contains('Enable Boot Logging') -and $message.Contains("-Pass PassB -Case '$dir'")) 'Missing Pass B Procmon or readiness instruction'
+            Assert-True ($message.Contains('Enable Boot Logging') -and $message.Contains('wait two full minutes') -and $message.Contains('Save Pass B early logs')) 'Missing Pass B Procmon or readiness instruction'
             $view=Get-CollectorView $entry $true $boot.AddMinutes(1)
             Assert-True ($view.Action -eq 'SaveDebugB' -and $view.ActiveB -and $view.NotesPass -eq 'PassB') 'Missing B capture routing'
             $b.EarlyDebugSavedUtc=$boot.AddMinutes(1).ToString('o'); $b|ConvertTo-Json|Set-Content $bp
@@ -136,6 +137,56 @@ try {
         }
     }
     if (!$Baseline) {
+        Test-Case 'AMSP watcher retains reused rotation names and takes one bounded final active copy' {
+            $src=Join-Path $Root 'Watcher source'
+            $dest=Join-Path $Root 'Watcher destination'
+            $null=New-Item -ItemType Directory $src,$dest
+            $rot=Join-Path $src 'Amsp_LocalDebugLog.0.log'
+            $active=Join-Path $src 'Amsp_LocalDebugLog.log'
+            [IO.File]::WriteAllText($rot,'first generation')
+            [IO.File]::WriteAllText($active,'currently open')
+            [IO.File]::WriteAllText((Join-Path $src 'Amsp_LocalDebugLog.old.log'),'unrelated')
+            $seen=@{};$since=[datetime]::UtcNow.AddMinutes(-1)
+            Copy-RotatedAMSP $src $dest $since $seen
+            Copy-RotatedAMSP $src $dest $since $seen
+            Assert-True (@(Get-ChildItem $dest -Recurse -File).Count -eq 1) 'Duplicate copy or current file recopied'
+            [IO.File]::WriteAllText($rot,'second rotation')
+            Copy-RotatedAMSP $src $dest $since $seen -IncludeActive
+            $files=@(Get-ChildItem $dest -Recurse -File)
+            $contents=@($files|ForEach-Object { [IO.File]::ReadAllText($_.FullName) })
+            Assert-True ($files.Count -eq 3 -and 'first generation' -in $contents -and 'second rotation' -in $contents -and 'currently open' -in $contents) 'Lost a reused slot or the final file'
+        }
+        Test-Case 'An unavailable AMSP rotation does not block another generation or its later retry' {
+            $src=Join-Path $Root 'Locked generation source'
+            $dest=Join-Path $Root 'Locked generation destination'
+            $null=New-Item -ItemType Directory $src,$dest
+            $held=Join-Path $src 'Amsp_LocalDebugLog.0.log'
+            $free=Join-Path $src 'Amsp_LocalDebugLog.1.log'
+            [IO.File]::WriteAllText($held,'temporary sharing violation')
+            [IO.File]::WriteAllText($free,'available')
+            $seen=@{}
+            $since=[datetime]::UtcNow.AddMinutes(-1)
+            $handle=[IO.File]::Open($held,'Open','Read','None')
+            try {
+                $issues=@(Copy-RotatedAMSP $src $dest $since $seen)
+                Assert-True ($issues.Count -eq 1 -and $issues[0].Contains('Amsp_LocalDebugLog.0.log') -and $seen.ContainsKey('Amsp_LocalDebugLog.1.log')) 'An unrelated generation was blocked'
+            } finally { $handle.Dispose() }
+            $issues=@(Copy-RotatedAMSP $src $dest $since $seen)
+            Assert-True (!$issues.Count -and $seen.Count -eq 2) 'The locked generation was never retried'
+        }
+        Test-Case 'Interactive resume and watcher actions are scoped to the run and GUI opt-out is represented' {
+            $owner=[pscustomobject]@{RunId=('a'*32);ResumeSid='S-1-5-21-1';TaskDefaultPolicy=$true}
+            $path='C:\SWP-Perf\CASE-07'
+            $gui=Get-PassTaskSpec $owner $path PassA ResumeGui
+            $watch=Get-PassTaskSpec $owner $path PassB WatchAMSP
+            Assert-True ($gui.Arguments.Contains('-STA') -and $gui.Arguments.Contains('-Stage ResumeGui') -and $gui.Arguments.Contains(' -Pass PassA ') -and !$gui.Arguments.Contains('NonInteractive')) 'GUI task cannot open interactively'
+            Assert-True ($watch.Arguments.Contains('-NonInteractive') -and $watch.Arguments.Contains(' -Pass PassB ')) 'Watcher task not scoped'
+            Assert-True ((Get-ColdSignInInstructions $owner PassA).Contains('reopens automatically')) 'Missing automatic resume instruction'
+            $owner.ResumeSid=$null;$owner.TaskDefaultPolicy=$false
+            Assert-True (!(Get-ColdSignInInstructions $owner PassA).Contains('reopens automatically')) 'Autostart promised without a task'
+            Assert-True (!(Get-PassTaskSpec $owner $path PassA ResumeGui).Arguments.Contains('-ExecutionPolicy')) 'Existing execution policy bypassed'
+            Assert-Throws {Get-PassTaskSpec $owner 'C:\elsewhere' PassA ResumeGui} 'Accepted an unowned case path'
+        }
         Test-Case 'Cold sign-in readiness requires a new paired scan while the console is held' {
             $State = [pscustomobject]@{Scenario='Reboot';ComputerName=$env:COMPUTERNAME;RunId=('a'*32);Finished=$false;PreparationComplete=$true}
             function Read-CollectionState { param($Pass,[switch]$RequireReboot) Assert-True $RequireReboot 'Boot validation skipped' }
@@ -232,7 +283,18 @@ switch ($Stage) {
                         $other=$w.FindName('Other')
                         $button=$primary
                         switch ($script:guiProbe.Step) {
-                            0 {$other.SelectedItem='Prepare Pass B';$button=$w.FindName('RunOther')}
+                            0 {
+                                $hint=$w.FindName('ActionDescription')
+                                Assert-True ($hint.Text.Contains('Collection continues')) 'Missing default Show status description'
+                                $other.SelectedItem='Delete all local cases'
+                                Assert-True ($hint.Text.Contains('every case under C:\SWP-Perf')) 'Delete scope is unclear'
+                                $other.SelectedItem='Restore settings and keep evidence'
+                                Assert-True ($hint.Text.Contains('Keep the case files')) 'Retention is unclear'
+                                Assert-True (!(Test-Path "$guiCase\actions.jsonl")) 'Selecting a description executed an action'
+                                $other.SelectedItem='Prepare Pass B'
+                                Assert-True ($hint.Text.Contains('Procmon reboot capture')) 'Pass B description did not update'
+                                $button=$w.FindName('RunOther')
+                            }
                             1 {
                                 if ($primary.Content -ne 'Save Pass B early logs') {throw "Unexpected post-restart button: $($primary.Content)"}
                                 if($recover){$other.SelectedItem='Recover Pass B and package';$button=$w.FindName('RunOther')}
@@ -890,8 +952,17 @@ Write-Output 'file name = diag-[fresh].zip'
             }
             $lines[0..3] | Set-Content -LiteralPath "$dir\Amsp_LocalDebugLog.1.log"
             $lines[2..5] | Set-Content -LiteralPath "$dir\Amsp_LocalDebugLog.log"
+            $inside=$End.AddMilliseconds(-200).ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
+            $after=$End.AddMilliseconds(200).ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
+            @("$inside,[10000:20000] >>> SCANFILE: C:\Fixture\cross.dll,[fixture]",
+              "$inside,[10000:30000] >>> SCANFILE: C:\Fixture\missing.dll,[fixture]",
+              "$after,[10000:20000] <<< SCANFILE: scan time (microsecond) = 400000") |
+                Add-Content -LiteralPath "$dir\Amsp_LocalDebugLog.log"
             $coverage = Get-ScanCoverage (Get-RegularEvidenceFiles $Case) $Start $End
             Assert-True ($coverage.Status -eq 'Observed' -and $coverage.SignInPairs -eq 3) 'Expected three distinct scan events.'
+            Assert-True ($coverage.SignInScanStarts -eq 5 -and $coverage.SignInStartPaths -eq 4 -and $coverage.SignInDistinctPaths -eq 2) 'Starts, complete pairs or path counts conflated'
+            $starts=@(Import-Csv -LiteralPath "$Case\Trend\PassA-SignIn-scan-starts.csv")
+            Assert-True ($starts.Count -eq 5 -and @($starts|Where-Object CompletedInSignIn -eq 'False').Count -eq 2) 'Missing incomplete or crossing scans'
             $rows = @(Import-Csv -LiteralPath "$Case\Trend\Timed-scans.csv")
             Assert-True (@($rows | Where-Object { $_.Path -eq 'C:\Fixture\alpha.dll' -and [int]$_.EngineMicroseconds -eq 12000 }).Count -eq 2) 'Expected two scans of alpha.dll.'
         }
