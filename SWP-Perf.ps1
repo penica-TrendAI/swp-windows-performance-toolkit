@@ -1469,6 +1469,9 @@ function Receive-DiagnosticArchive {
     param($Result,[string]$Destination,[string]$RecordPath)
     $response=(Get-Content -LiteralPath "$Destination\dsa_control-output.txt" -Raw) + "`n" + (Get-Content -LiteralPath "$Destination\dsa_control-error.txt" -Raw)
     if($response -match '(?i)HTTP Status:\s*([45]\d\d)'){ $Result.Status='Failed'; throw "Agent diagnostic HTTP failure: $($Matches[1])." }
+    if ($null -eq $Result.ExitCode -and $response -notmatch '(?i)HTTP Status:\s*2\d\d') {
+        $Result.Status='UnconfirmedRequest'; throw 'Waiting for a successful service response because the controller exit code is unavailable.'
+    }
     $reported=Get-DiagnosticResponsePath $response
     if(!$reported){$Result.Status='UnconfirmedRequest';throw 'No exact archive name in the service response. Preserve the output and verify completion before restarting the service.'}
     $Result.ExpectedPath=$reported
@@ -1621,7 +1624,12 @@ function Invoke-DiagnosticRequest {
         }
         $null = $Process.Handle
         $Result.Status='Running'; $Result.ProcessId=$Process.Id
-        $Result.ProcessStartedAt=$Process.StartTime.ToUniversalTime().ToString('o')
+        $startedAt = $Process.StartTime
+        if ($startedAt) { $Result.ProcessStartedAt=$startedAt.ToUniversalTime().ToString('o') }
+        elseif (!$Process.HasExited) {
+            $Result.Status='UnconfirmedRequest'
+            throw 'The diagnostic controller started but its start time could not be verified. Preserve its output before resuming.'
+        }
         Save-DiagnosticRecord $Result $Destination $RecordPath
         $Deadline = (Get-Date).AddMinutes($DiagnosticTimeoutMinutes)
         $NextMessage = Get-Date
@@ -1638,7 +1646,8 @@ function Invoke-DiagnosticRequest {
         $Process.WaitForExit()
         $Result.ExitCode=$Process.ExitCode
         Get-Content "$Destination\dsa_control-output.txt", "$Destination\dsa_control-error.txt" | Out-Host
-        if ($Process.ExitCode -ne 0) { throw "dsa_control returned $($Process.ExitCode). Review captured output and self-protection." }
+        if ($null -ne $Result.ExitCode -and $Result.ExitCode -ne 0) { throw "dsa_control returned $($Result.ExitCode). Review captured output and self-protection." }
+        if ($null -eq $Result.ExitCode) { Write-Warning 'The controller exited before its exit code was observed. Checking the service response and the exact diagnostic archive.' }
         Receive-DiagnosticArchive $Result $Destination $RecordPath
     } catch {
         if ($Result.Status -notin 'TimedOut','AwaitingArchive','UnconfirmedRequest') { $Result.Status='Failed' }

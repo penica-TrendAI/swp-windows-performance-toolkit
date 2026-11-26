@@ -613,6 +613,19 @@ Write-Output 'file name = diag-[fresh].zip'
             Invoke-Finish -Pass PassB -Recovery
             Assert-True ((Test-Path "$Case\Trend\PassB\metrics-attempt.txt") -and (Test-Path "$Case\Cleanup\restored.txt") -and (Test-Path "$Case\Events\PassB\System.evtx")) 'Interrupted B blocked independent retrieval'
             Assert-True (!(Test-Path "$Case\Procmon\PassB-segments.csv") -and (Get-PmlEvidenceGaps "$Case\Procmon") -match 'missing') 'Recovery verified an absent PML'
+            $phase.PreparedBoot=$boot.AddHours(-2).ToString('o')
+            $phase.PreparedAt=$boot.AddMinutes(-1).ToString('o')
+            $phase.PreparationComplete=$true
+            $phase|ConvertTo-Json|Set-Content "$Case\Cleanup\PhaseB-state.json"
+            $live="$Case\Trend\LiveMetrics\PassB\$($phase.RunId)"
+            $null=New-Item -ItemType Directory -Path $live -Force
+            $boot.ToString('o')|Set-Content "$live\BootUtc.txt"
+            Assert-Throws {Invoke-Finish -Pass PassB} 'Normal Finish B accepted an empty capture'
+            foreach ($name in 'login.pml','login-1.pml') { [IO.File]::WriteAllBytes("$Case\Procmon\$name",[byte[]](1,2,3)) }
+            Invoke-Finish -Pass PassB
+            $rows=@(Import-Csv "$Case\Procmon\PassB-segments.csv")
+            Assert-True ($rows.Count -eq 2 -and !@(Get-PmlEvidenceGaps "$Case\Procmon" $phase.RunId).Count) 'Normal finish did not inventory both segments'
+            Assert-True ((Get-Content "$Case\Cleanup\PhaseB-state.json" -Raw|ConvertFrom-Json).Finished) 'Successful B finish was not persisted'
         }
         Test-Case 'Cleanup retains tools, supports KeepEvidence, and only deletes its fixture case root' {
             $CleanupRoot=Join-Path $Root 'CleanupOnly';New-Item -ItemType Directory "$CleanupRoot\CASE-X" -Force|Out-Null
