@@ -13,7 +13,7 @@ $user = Read-Host 'Enter the account printed by whoami on your normal desktop'
 & $swp -Stage Prepare -Scenario SignOutSignIn -AffectedUser $user
 ```
 
-**3. Reproduce.** Wait for **Prepared**. Fully sign out or restart as chosen, then sign in once as the account you noted. Record when you submit credentials and when the desktop responds. Launch an agreed app normally and record its launch/ready times, if part of the test. For sign-in only, stop at usable desktop.
+**3. Reproduce.** After **Prepared**, sign out and back in for a same-boot test. For per-file timings after restart, stay at the sign-in screen. From a second device, run the **CheckSignInReady** command shown by the collector in an elevated remote shell on this PC. Sign in at **READY TO SIGN IN**. For the usual immediate sign-in, use normal timing. Record credential submission, usable desktop and any agreed app launch/ready times.
 
 **4. Stop immediately.** Reopen the collector and click **Stop trace now**, or open a **new elevated Windows PowerShell**. The previous window and its variables are gone. Run these lines before waiting for metrics. Note any delay opening the elevated window.
 

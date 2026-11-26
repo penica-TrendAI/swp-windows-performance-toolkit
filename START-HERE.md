@@ -4,7 +4,7 @@ Open [the handbook PDF](Documentation/SWP-Perf-Handbook.pdf) for installation, c
 
 | I am… | Open this first |
 |---|---|
-| The person experiencing the delay | [One-page participant instructions](Documentation/Participant-sheet.pdf). Wait for IT to confirm that recording is ready. |
+| The person experiencing the delay | [One-page participant instructions](Documentation/Participant-sheet.pdf). For per-file scan timings after restart, stay at the sign-in screen until IT gives the go-ahead. |
 | The Windows administrator | [Administrator runbook](Customer-Runbook.md) and handbook pages 3–10. |
 | The administrator signing in to my own account | [Checklist for an administrator testing their own account](Documentation/Administrator-participant.pdf), also in [copyable Markdown](Documentation/Administrator-participant.md). One person can run and reproduce the test. |
 | The Trend policy administrator | Handbook page 8, “Policy context and protection”, followed by the restoration checks on page 10. |

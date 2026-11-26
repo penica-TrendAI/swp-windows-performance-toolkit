@@ -70,3 +70,7 @@ For an ordinary rebuild, the two vendor tools come from the existing tracked ZIP
 Exercise the dashboard with a finished, open Pass A case. Verify the optional prepare action, restart instructions, early snapshot, separate notes, Finish B, Package and B-specific recovery after interruption. The manual Procmon steps require an administrator on the Windows desktop. Preserve all PML segments before finishing.
 
 `Procmon/PassB-segments.csv` records the segments observed at finish. Reopen the combined ZIP and check its assessment after removing or replacing a segment in a fixture. Each pass has its own event export manifest. Failed exports for known channels are evidence gaps. Also test recovery before restart and after a boot without a saved PML. A successful archive hash verifies file integrity independently of sign-in timing coverage.
+
+## First sign-in after restart
+
+The pre-restart GUI and CLI share the participant instruction and the case-specific command. `CheckSignInReady` runs on the endpoint through an elevated noninteractive session. It validates the reboot pass, reuses the same signed scan control as the same-boot workflow, and verifies a fresh path-matched pair. The check rejects an occupied console and makes up to three probe attempts. `Trend/<pass>-Cold-signin-control.json` describes the latest check. Only the later sign-in assessment establishes coverage between authentication and Explorer. Fixture tests cover retries, an occupied console, a sign-in during verification, stale proof and both GUI pass instructions.

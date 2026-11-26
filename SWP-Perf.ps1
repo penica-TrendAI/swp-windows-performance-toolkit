@@ -14,7 +14,8 @@ self-protection through the console, and confirm no unrelated WPR/Procmon captur
 
 PRIMARY SEQUENCE (reboot, login and first application launches in the same pass):
   .\SWP-Perf.ps1 -Stage Prepare
-  # Reboot manually; log in and launch the agreed applications; record timings.
+  # Restart. For per-file timings, hold at the sign-in screen while an administrator
+  # runs CheckSignInReady remotely on this computer. At the go-ahead, sign in and reproduce.
   .\SWP-Perf.ps1 -Stage StopTrace
   .\SWP-Perf.ps1 -Stage FinishAndPackage
 
@@ -32,6 +33,7 @@ OTHER ACTIONS:
                   if none was recorded. Never automatically deletes evidence.
   CollectContext  Export selected login tasks; copy administrator-selected PS1/VBS and console exports.
   Status          Show task, case and trace-restoration/diagnostic state.
+  CheckSignInReady  From a separate elevated management session after reboot, verify a fresh paired AMSP scan before credentials.
   PrepareB        Prepare optional Procmon boot repeat after Phase A; manually enable
                   Procmon boot logging, reboot/reproduce, save PML and close Procmon.
   SaveDebug       Copy an early raw debug snapshot; use -Pass PassB for optional pass.
@@ -80,7 +82,7 @@ https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-opt
 param(
     [Alias('Action')]
     [ValidateSet('Gui','Help','InstallTools','Prepare','StopTrace','Finish','FinishAndPackage','Status',
-        'PrepareB','SaveDebug','FinishB','RestoreTrace','Diagnostics','Package','CollectContext','Cleanup','RecoverAndPackage','CaptureMetrics')]
+        'PrepareB','CheckSignInReady','SaveDebug','FinishB','RestoreTrace','Diagnostics','Package','CollectContext','Cleanup','RecoverAndPackage','CaptureMetrics')]
     [string]$Stage = 'Gui',
     [ValidatePattern('^C:\\SWP-Perf\\CASE-[A-Za-z0-9_-]+$')]
     [string]$Case = 'C:\SWP-Perf\CASE-01',
@@ -711,7 +713,8 @@ public sealed class SwpScanReader {
 '@
 }
 
-function Confirm-WarmScanControl {
+function Get-FreshScanControl {
+    param([int]$WaitSeconds)
     Initialize-ScanReader
     $since = (Get-Date).AddSeconds(-1).ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
     $dir = Join-Path $ToolRoot ('ScanControl-'+[guid]::NewGuid().ToString('N'))
@@ -722,17 +725,78 @@ function Confirm-WarmScanControl {
         if ((Get-AuthenticodeSignature -LiteralPath $src).Status -ne 'Valid') { throw 'Signed control executable could not be verified.' }
         Copy-Item -LiteralPath $src -Destination $file
         & $file | Out-Null
-        $until=(Get-Date).AddSeconds(65)
+        $until=(Get-Date).AddSeconds($WaitSeconds)
         do {
-            $logs = @(Get-ChildItem -LiteralPath $AmspDebug -Filter 'Amsp_LocalDebugLog*.log' -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 3 -ExpandProperty FullName)
+            $recent = Get-ChildItem -LiteralPath $AmspDebug -Filter 'Amsp_LocalDebugLog*.log' -File |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 3
+            # Records can share a millisecond across rotation. Read the active generation last.
+            $logs = @($recent | Sort-Object @{Expression={ $_.Name -eq 'Amsp_LocalDebugLog.log' }}, LastWriteTimeUtc |
+                Select-Object -ExpandProperty FullName)
             $reader = New-Object SwpScanReader
             $reader.Read([string[]]$logs,$since,'9999/12/31 23:59:59.999',$true)
             $control = @($reader.Pairs | Where-Object { $_.Path -eq $file -or $_.Path -eq ('\\?\'+$file) })
-            if ($control.Count) { $control | ConvertTo-Json | Set-Content -LiteralPath "$Case\Trend\Warm-control.json" -Encoding UTF8; return }
+            if ($control.Count) { return $control }
             Start-Sleep -Seconds 2
         } while ((Get-Date) -lt $until)
-        throw 'The signed control did not produce a paired AMSP scan. Keep the session signed in, inspect the case and use recovery.'
     } finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue; [IO.Directory]::Delete($dir,$false) }
+}
+
+function Confirm-WarmScanControl {
+    $pairs = @(Get-FreshScanControl -WaitSeconds 65)
+    if (!$pairs.Count) { throw 'The signed control did not produce a paired AMSP scan. Keep the session signed in, inspect the case and use recovery.' }
+    $pairs | ConvertTo-Json | Set-Content -LiteralPath "$Case\Trend\Warm-control.json" -Encoding UTF8
+}
+
+function Get-ColdSignInInstructions {
+    param([string]$CasePath, [string]$PassName)
+    $command = "& '$ToolRoot\SWP-Perf.ps1' -Stage CheckSignInReady -Pass $PassName -Case '$CasePath'"
+    @(
+        'For per-file scan timings, restart Windows and stay at the sign-in screen. Enter credentials only when the administrator gives the go-ahead.'
+        'Administrator: from another device, run this on the restarted computer in an elevated, noninteractive management session:'
+        $command
+        'After READY TO SIGN IN, give the go-ahead. If measuring the usual immediate sign-in instead, use normal timing and record that choice.'
+    ) -join [Environment]::NewLine
+}
+
+function Confirm-ColdSignInReady {
+    param([string]$PassName)
+    Read-CollectionState -Pass $PassName -RequireReboot
+    if ($State.Scenario -ne 'Reboot' -or $State.Finished -or $State.ComputerName -ne $env:COMPUTERNAME -or $State.RunId -notmatch '^[a-f0-9]{32}$') {
+        throw 'This check requires an active reboot pass on this computer.'
+    }
+    if ($PassName -eq 'PassA') { Assert-CaseTrace $State }
+    elseif (!$State.PreparationComplete -or $State.EarlyDebugSavedUtc -or $State.ReproductionEndUtc) {
+        throw 'The Pass B preparation must be complete and its reproduction window must still be open.'
+    }
+    $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+    $proof = [ordered]@{
+        Pass=$PassName; RunId=$State.RunId; BootUtc=$boot.ToString('o'); CheckedAtUtc=$null
+        Status='Unverified'; Pairs=@()
+    }
+    $result = Join-Path $Case "Trend\$PassName-Cold-signin-control.json"
+    try {
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            if ((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName) {
+                throw 'A console user is already signed in. Preserve this capture with its actual sign-in timing.'
+            }
+            $pairs = @(Get-FreshScanControl -WaitSeconds 15)
+            if ($pairs.Count) {
+                if ((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName) {
+                    throw 'A console user signed in during the check. Record the actual timing.'
+                }
+                $proof.Pairs = $pairs
+                $proof.Status = 'Observed'
+                break
+            }
+        }
+        if ($proof.Status -ne 'Observed') {
+            throw 'No fresh paired AMSP scan was observed. Keep the user at the sign-in screen and retry, or record unverified coverage and finish the capture.'
+        }
+    } finally {
+        $proof.CheckedAtUtc = [datetime]::UtcNow.ToString('o')
+        $proof | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $result -Encoding UTF8 -ErrorAction Stop
+    }
+    Write-Host "READY TO SIGN IN. A fresh paired AMSP scan was observed. Tell the user to enter credentials now. Evidence: $result"
 }
 
 function Save-SignInMilestones {
@@ -1804,7 +1868,8 @@ function Invoke-PrepareB {
     Save-State
     Write-Host 'Pass B prepared for metrics and persistent AM logging. WPR is not armed.'
     Write-Host 'MANUAL: Open Procmon as administrator, stop live capture, enable Options > Enable Boot Logging (no thread profiling), and close it.'
-    Write-Host 'Reboot, repeat login/apps, then open Procmon, save ALL PML segments under Case\Procmon, disable boot logging and exit.'
+    Write-Host (Get-ColdSignInInstructions $Case 'PassB')
+    Write-Host 'After reproduction, save early debug. Open Procmon, save ALL PML segments under Case\Procmon, disable boot logging and exit.'
     Write-Host 'Run -Stage SaveDebug -Pass PassB promptly, then -Stage FinishB; run -Stage Package when ready.'
 }
 
@@ -2050,7 +2115,7 @@ function Get-CollectorView {
     $notesPass = 'PassA'
     $action = 'Prepare'
     $title = 'Ready for a new capture'
-    $message = 'Choose the sign-in scenario and confirm the affected account. Record the baseline and verify agent self-protection with the policy owner before preparing.'
+    $message = 'Choose the sign-in scenario and affected account. Record the baseline and verify self-protection with the policy owner. For per-file timings after restart, arrange a second device for the administrator to check readiness before the user signs in.'
     if (!$Installed) {
         $action = 'InstallTools'; $title = 'Install the collection tools'
         $message = 'Install from the complete extracted customer kit. The same PowerShell commands remain available after installation.'
@@ -2083,7 +2148,7 @@ function Get-CollectorView {
                 $action = 'Review'; $message = 'Pass B preparation was interrupted. Review status and use Recover Pass B to preserve the available evidence.'
             } elseif ($BootUtc -le (Parse-StateDateTime $phaseB.PreparedBoot).ToUniversalTime()) {
                 $action = 'Instructions'
-                $message = 'Open Microsoft Process Monitor as administrator. Stop live capture, enable Options > Enable Boot Logging without thread profiling, then exit Procmon. Restart, sign in and repeat the agreed launches. Reopen this collector when the symptom ends.'
+                $message = 'In Procmon, stop live capture, enable Options > Enable Boot Logging without thread profiling, then exit Procmon.' + [Environment]::NewLine + (Get-ColdSignInInstructions $dir 'PassB')
             } elseif (!$phaseB.EarlyDebugSavedUtc) {
                 $action = 'SaveDebugB'
                 $message = 'As soon as the agreed sign-in or app delay ends, save the early Trend logs. Then open Procmon to save the boot capture.'
@@ -2113,7 +2178,7 @@ function Get-CollectorView {
             $action = 'Review'; $title = 'Interrupted capture'; $message = 'Review Status before choosing recovery. Recover and package keeps available evidence and reports coverage gaps.'
         } elseif ($phase.Scenario -eq 'Reboot' -and $BootUtc -le (Parse-StateDateTime $phase.PreparedBoot).ToUniversalTime()) {
             $action = 'Instructions'; $title = 'Prepared for restart'
-            $message = 'Close this window. Restart manually, sign in to the affected account, and launch the agreed apps normally. Reopen the collector at the agreed milestone.'
+            $message = Get-ColdSignInInstructions $dir 'PassA'
         } else {
             $action = 'StopTrace'; $title = 'Capture armed'
             $message = 'After the agreed sign-in and application milestone, stop the trace immediately. For a sign-out test, fully sign out and sign back in first.'
@@ -2255,7 +2320,11 @@ function Show-CollectorWindow {
             $argsForStage = @{}
             if ($ui.Case) { $argsForStage.Case = $ui.Case }
             switch ($action) {
-                'Instructions' { [void][Windows.MessageBox]::Show($window,$controls.Instruction.Text,'Reproduce the delay'); return }
+                'Instructions' {
+                    & $append $controls.Instruction.Text
+                    [void][Windows.MessageBox]::Show($window,$controls.Instruction.Text,'Reproduce the delay')
+                    return
+                }
                 'OpenHandoff' {
                     $receipt = Get-Content -LiteralPath (Join-Path $ui.Case 'Cleanup\Handoff-receipt.json') -Raw | ConvertFrom-Json
                     $archive = [IO.FileInfo]::new([string]$receipt.Archive)
@@ -2468,7 +2537,7 @@ function Invoke-Prepare {
         return
     }
     Write-Host 'Prepared. Focused boot WPR, persistent AM debug and DSA metrics are armed.'
-    Write-Host 'Reboot manually now, log in and reproduce the agreed application launches.'
+    Write-Host (Get-ColdSignInInstructions $Case 'PassA')
     Write-Host 'Immediately afterward run SWP-Perf.ps1 -Stage StopTrace, then -Stage FinishAndPackage. Do not wait for metrics before StopTrace.'
     return
 }
@@ -2953,7 +3022,7 @@ try {
     'Help' {
         Write-Host 'Open the script on the desktop for the GUI. All explicit collection stages run directly from PowerShell.'
         Write-Host 'Prepare allocates the next CASE number. Later stages resolve the active case; use -Case for an explicit path.'
-        Write-Host 'SWP-Perf.ps1: Prepare -> manual reboot/login/apps -> StopTrace -> FinishAndPackage'
+        Write-Host 'Prepare -> restart -> for per-file timings, hold at sign-in and run CheckSignInReady remotely -> sign in/reproduce -> StopTrace -> FinishAndPackage.'
         Write-Host 'Other actions: InstallTools, Finish, Diagnostics, Package, Status, PrepareB, SaveDebug -Pass PassB, FinishB, RestoreTrace, CollectContext, Cleanup.'
         Write-Host 'Keep this script in C:\Program Files\SWP-PerfTools. Extract the DSA CMD package first; handle self-protection in the console.'
         Write-Host 'Cleanup deletes ALL C:\SWP-Perf, including archives there. Transfer ZIP and SHA256 first.'
@@ -2969,6 +3038,7 @@ try {
     }
     'CaptureMetrics' { Invoke-MetricsWorker }
     'Prepare' { Invoke-Prepare }
+    'CheckSignInReady' { Confirm-ColdSignInReady $Pass }
     'StopTrace' { Invoke-StopTrace }
     'Finish' { Invoke-Finish -Pass 'PassA' }
     'RecoverAndPackage' { Invoke-Finish -Pass $Pass -Recovery; New-CaseArchive }

@@ -1,6 +1,6 @@
 {
   "date": "2026-11-26",
-  "collectorSHA256": "4f6782e86e10059c12e3465c724e2da0d4991ce70bfaff2a49f69b1f6b864d5b",
+  "collectorSHA256": "b22bf2c14c6bed0e6d946ddb3b3a12ba84c9b38f61bf9d3c3741aace4c6a7464",
   "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
   "agentCore": "20.0.3-31610",
   "supportTool": "1.0.0.1203",
@@ -11,7 +11,8 @@
     "failed": 0,
     "platform": "Windows Server 2022, Windows PowerShell 5.1",
     "run": "https://github.com/penica-TrendAI/swp-windows-performance-toolkit/actions/runs/45815430272",
-    "inputs": "Generated cases, WPF buttons and pinned vendor bundles. Includes interrupted recovery, changed and missing PML segments, failed event exports and delayed native diagnostic publication."
+    "inputs": "Generated cases, WPF buttons and pinned vendor bundles. Includes interrupted recovery, changed and missing PML segments, failed event exports and delayed native diagnostic publication.",
+    "collectorSHA256": "4f6782e86e10059c12e3465c724e2da0d4991ce70bfaff2a49f69b1f6b864d5b"
   },
   "liveWindows11": {
     "workflow": "Pass A reboot with WPR, followed by a second reboot with Microsoft Process Monitor 4.12 and a combined handoff. Automatic sign-in was configured on the lab VM. The lab operator steps for enabling and converting the Procmon log used the Microsoft tool.",
@@ -62,7 +63,8 @@
       "passA": 0,
       "passB": 0
     },
-    "scope": "PML files document Windows file operations. Trend engine durations require matched scan records within a corroborated sign-in window. Production coverage depends on the host and reproduction. Customer agent build 20.0.3.29020 requires its own pilot."
+    "scope": "PML files document Windows file operations. Trend engine durations require matched scan records within a corroborated sign-in window. Production coverage depends on the host and reproduction. Customer agent build 20.0.3.29020 requires its own pilot.",
+    "collectorSHA256": "4f6782e86e10059c12e3465c724e2da0d4991ce70bfaff2a49f69b1f6b864d5b"
   },
   "previousValidation": {
     "collectorSHA256": "741819cca6a55f33c96931e1348e2741d75c83fcc2d668e48ec81de88d85e27f",
@@ -77,5 +79,16 @@
     },
     "offlineExportCheck": "Verified the default xperf reports and an initial-window disk summary using a Windows lab ETL.",
     "otherScenarios": "Separate earlier captures exercised same-boot sign-in, reboot and recovery."
+  },
+  "coldSignInReadiness": {
+    "collectorSHA256": "b22bf2c14c6bed0e6d946ddb3b3a12ba84c9b38f61bf9d3c3741aace4c6a7464",
+    "platform": "Windows 11, Windows PowerShell 5.1",
+    "checks": [
+      "Displayed the prepared Pass A and Pass B instructions in WPF at the minimum supported window size.",
+      "Exercised the readiness decision with Windows fixtures for a new pair, a retry, attempts without a pair, an occupied console, sign-in during the check and the same-boot scenario.",
+      "Ran the actual signed Windows control and read generated log records split across a rotation within the same millisecond. The exact test file matched and its temporary directory was removed."
+    ],
+    "priorLabObservation": "DSA 20.0.3-31610. An immediate sign-in had zero scan starts from authentication through Explorer. With the credential screen held, unique signed probes were observed before authentication. The later sign-in recorded 190 paired scans for 184 paths from authentication through Explorer.",
+    "scope": "The lab reboot comparison preceded this CLI stage. The new stage itself was exercised with controlled inputs. No minimum delay or guaranteed sign-in coverage was established."
   }
 }
