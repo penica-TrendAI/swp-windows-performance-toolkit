@@ -1,6 +1,6 @@
 {
   "date": "2026-11-26",
-  "collectorSHA256": "b22bf2c14c6bed0e6d946ddb3b3a12ba84c9b38f61bf9d3c3741aace4c6a7464",
+  "collectorSHA256": "93ef4eabed96eab8e1d4411d756b960f31d1e99e47321e9d724674b54d30696a",
   "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
   "agentCore": "20.0.3-31610",
   "supportTool": "1.0.0.1203",
@@ -63,7 +63,7 @@
       "passA": 0,
       "passB": 0
     },
-    "scope": "PML files document Windows file operations. Trend engine durations require matched scan records within a corroborated sign-in window. Production coverage depends on the host and reproduction. Customer agent build 20.0.3.29020 requires its own pilot.",
+    "scope": "PML files document Windows file operations. Trend engine durations require matched scan records within a corroborated sign-in window. Production coverage depends on the host and reproduction. The lab and referenced endpoint both use the 20.0.3.* agent family. Assess coverage on each endpoint.",
     "collectorSHA256": "4f6782e86e10059c12e3465c724e2da0d4991ce70bfaff2a49f69b1f6b864d5b"
   },
   "previousValidation": {
@@ -88,7 +88,51 @@
       "Exercised the readiness decision with Windows fixtures for a new pair, a retry, attempts without a pair, an occupied console, sign-in during the check and the same-boot scenario.",
       "Ran the actual signed Windows control and read generated log records split across a rotation within the same millisecond. The exact test file matched and its temporary directory was removed."
     ],
-    "priorLabObservation": "DSA 20.0.3-31610. An immediate sign-in had zero scan starts from authentication through Explorer. With the credential screen held, unique signed probes were observed before authentication. The later sign-in recorded 190 paired scans for 184 paths from authentication through Explorer.",
+    "priorLabObservation": "DSA 20.0.3-31610. An immediate sign-in had zero scan starts from authentication through Explorer. With the credential screen held, unique signed probes were observed before authentication. The later sign-in recorded 190 scan starts across 184 paths from authentication through Explorer. All 190 had a completion and 189 completed within that interval.",
     "scope": "The lab reboot comparison preceded this CLI stage. The new stage itself was exercised with controlled inputs. No minimum delay or guaranteed sign-in coverage was established."
+  },
+  "localConsoleWorkflow": {
+    "platform": "Windows 11 build 22631, 64-bit Windows PowerShell 5.1, DSA 20.0.3-31610",
+    "delayedSignInPilot": {
+      "conditions": "Separate manual pilot, local Windows sign-in two minutes after the credential screen appeared.",
+      "authenticationToExplorerSeconds": 8.154,
+      "pairedScansWithinInterval": 218,
+      "distinctPaths": 211,
+      "startsInRotatedLog": 90,
+      "startsInActiveLog": 128,
+      "pairsCrossingRotation": 1,
+      "scope": "One observed local sign-in. The timing and scan coverage can differ on another boot or computer."
+    },
+    "liveRebootCheck": {
+      "candidateSHA256": "7cd55ea927ed3156eb1c9f19c5ccd2344505d33c380ee60113fc84f08f5b46fd",
+      "conditions": "Separate reboot with automatic Windows sign-in. The collector reopened in the local administrator desktop and Stop trace now saved the WPR file.",
+      "wprBytes": 1157103616,
+      "amspRotationsCopied": 3,
+      "activeFileCopiedAtStop": true,
+      "watcherReadErrors": 0,
+      "watcherStartedSecondsAfterBoot": 129,
+      "endReason": "StopRequested",
+      "scope": "The watcher also picks up surviving rotations when Windows starts the task late. Retired generations can already be gone."
+    },
+    "menuVerification": {
+      "collectorSHA256": "93ef4eabed96eab8e1d4411d756b960f31d1e99e47321e9d724674b54d30696a",
+      "widthsInWindowsUnits": [
+        780,
+        610
+      ],
+      "standard": "Selected action description alongside Run selected action",
+      "narrow": "Selected action description below the controls",
+      "actionsCheckedInRenderedWindows": [
+        "Delete all local cases",
+        "Restore settings and keep evidence"
+      ],
+      "selectingOnly": "No action started or changed action output."
+    },
+    "windowsFixtureSuite": {
+      "collectorSHA256": "93ef4eabed96eab8e1d4411d756b960f31d1e99e47321e9d724674b54d30696a",
+      "passed": 53,
+      "failed": 0,
+      "coverage": "Windows PowerShell 5.1 standard suite. Includes WPF action changes, run isolation, rotation retry, and incomplete scan starts. The five-minute publication case runs separately in the full Windows workflow."
+    }
   }
 }
