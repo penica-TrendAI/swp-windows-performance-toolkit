@@ -170,13 +170,29 @@ Check the output for restoration errors. The action removes the scheduled collec
 
 Use this only if support asks for a second, file-level capture. Obtain a build compatible with your Windows release directly from Microsoft. [Process Monitor download](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 
-Do this pass after `Finish` or `FinishAndPackage` and before `Cleanup`. If the first pass restored self-protection, temporarily disable it again for this computer and record the change. Close Procmon, then run `& $swp -Stage PrepareB`. Open Procmon as administrator, stop live capture, enable **Options > Enable Boot Logging** without thread profiling, and close it. Reboot and repeat the same sign-in and app launches. Reopen Procmon, save all PML segments under the active case’s `Procmon` folder, disable boot logging and exit. Run:
+Finish Pass A and keep the case open. Do this **before Cleanup**, including Cleanup with retained evidence. Coordinate the recorded self-protection settings with the policy owner. Open the installed collector and use the following sequence.
+
+| When | Administrator action |
+|---|---|
+| After Pass A | Select **Prepare Pass B** in the action list, click **Run selected action** and confirm. Wait for preparation to finish. |
+| Before restart | Open Procmon as administrator, stop live capture, enable **Options → Enable Boot Logging** without thread profiling, then exit Procmon and restart Windows. |
+| At the agreed milestone | Sign in and repeat the same launches. As soon as the delay ends, reopen the collector and click **Save Pass B early logs**. This records the end time and preserves the available AMSP rotations. |
+| Before finishing | Open Procmon as administrator. Save **every PML segment** into the displayed case’s `Procmon` folder, turn off boot logging and exit Procmon. Use **Open Pass B timing notes** for this repeat’s credential, desktop and application times. |
+| Handoff | Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` in the new combined ZIP. Pass A event logs are in `Events`, Pass B in `Events\PassB`. Packaging checks the names, sizes and hashes of the PML files present at finish. |
+| If interrupted | Turn off boot logging and close Procmon. Choose **Recover Pass B and package** to retrieve available evidence even if you could not save a PML. Inspect the reported gaps. |
+
+The same workflow is available in elevated PowerShell. Run each stage at the corresponding point above.
 
 ```powershell
+& $swp -Stage PrepareB
+# After the restart and reproduction
 & $swp -Stage SaveDebug -Pass PassB
+# After saving every PML, closing Procmon and entering timing notes
 & $swp -Stage FinishB
 & $swp -Stage Package
 ```
+
+For an interrupted B run use `& $swp -Stage RecoverAndPackage -Pass PassB`. Look for B’s paired scan records in `Trend\PassB-Timed-scans.csv` and its sign-in milestones in `Procmon\SignIn-milestones.json`. Counts measure the records that survived during each interval. A missing segment that was never saved by Procmon cannot be identified from the finish inventory alone.
 
 Restore console self-protection and follow the handoff and cleanup steps above.
 

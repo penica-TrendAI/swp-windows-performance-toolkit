@@ -336,22 +336,23 @@ The default publication wait permits 600 seconds without progress and has an ove
 
 ## Optional Procmon repeat
 
-Use Pass B if support needs more detailed Windows file-access information after reviewing Pass A. The standard capture already measures sign-in and the agreed application launches. Pass B is a repeat with Procmon and a new metrics task. Allow for extra trace overhead and disk space. Procmon is an optional Microsoft download. [Microsoft Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
+Use the optional repeat when support needs Windows file operations from a separate restart. Allow space for the PML files and the combined ZIP. Obtain a compatible Process Monitor build. [Microsoft Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 
-1. Finish Pass A and verify the original agent trace state was restored. Keep its case, the disabled Phase A task and the temporary tool JSON. Perform this repeat **before** Cleanup or Cleanup -KeepEvidence. Coordinate temporary self-protection handling again if needed.
-2. Close diagnostic tools. PrepareB requires the WPR session check to succeed. Run `& $swp -Stage PrepareB`. It prepares AMSP and the boot-triggered metrics task.
-3. Run Procmon as administrator. Stop live capture, then choose **Options → Enable Boot Logging**, without thread profiling. Close Procmon and restart Windows. Repeat the same sign-in and applications.
-4. Open Procmon as administrator, save **all** PML segments into the case’s `Procmon` folder, turn off boot logging, and exit Procmon. Save the raw debug promptly, finish Pass B, then package both passes.
+1. Finish A and confirm trace settings were restored. Before cleanup, coordinate self-protection with the policy owner. Select **Prepare Pass B** in the action list, click **Run selected action** and confirm.
+2. Open Procmon as administrator, stop live capture and choose **Options → Enable Boot Logging** without thread profiling. Close Procmon, restart Windows and repeat the same sign-in and launches.
+3. At the agreed milestone, reopen the collector and click **Save Pass B early logs**. In Procmon save every PML segment in the displayed case’s `Procmon` folder. Turn off boot logging and exit Procmon.
+4. Select **Open Pass B timing notes** and enter B’s actual times. Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` for B’s scan coverage, PML integrity and event exports.
 
 ```powershell
+& $swp -Stage PrepareB
+# After reproduction
 & $swp -Stage SaveDebug -Pass PassB
+# After saving PML and closing Procmon
 & $swp -Stage FinishB
 & $swp -Stage Package
 ```
 
-Compare each pass only within its own recorded time window and document the different instrumentation. FinishB requires a fresh PML. Keep the segment set together if the failure happened before saving. A Procmon event shows a Windows file operation and can help investigate filter or stack activity. Use AMSP timings to attribute an engine duration.
-
-If Trend support requests its GUI package, launch the bundled executable from `C:\Program Files\SWP-PerfTools\DSASupportTool_GUI`, choose **Collect Data** and save the returned package. Copy it into the case’s `Trend\FinalDiagnostics` folder, close the GUI, then run Package again. Return the latest outer ZIP and matching checksum.
+If a PML could not be saved, close Procmon after disabling boot logging and choose **Recover Pass B and package**, or run `& $swp -Stage RecoverAndPackage -Pass PassB`. Review the partial ZIP. Pass A events remain in `Events`; B events are in `Events\PassB`. Only paired AMSP records support per-file engine times.
 
 ## Stage reference
 
