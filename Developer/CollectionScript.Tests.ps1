@@ -31,7 +31,8 @@ function Test-Case {
     try { & $Action; $Results.Add([pscustomobject]@{Name=$Name;Status='PASS';Error=$null}); Write-Host "PASS $Name" }
     catch { $Results.Add([pscustomobject]@{Name=$Name;Status='FAIL';Error=$_.Exception.ToString()}); Write-Host "FAIL $Name : $($_.Exception.Message)" }
 }
-$Root=Join-Path $env:TEMP ('SWP Collector Tests '+[guid]::NewGuid().ToString('N'))
+$fixtureBase=if ($env:RUNNER_TEMP) {$env:RUNNER_TEMP} else {[IO.Path]::GetFullPath($env:TEMP)}
+$Root=Join-Path $fixtureBase ('SWP Collector Tests '+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Root | Out-Null
 New-Item -ItemType Directory -Path $ResultsFolder -Force | Out-Null
 $Case=Join-Path $Root 'CASE-Test'
@@ -117,6 +118,86 @@ try {
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Package') 'Package missing'
             '{}'|Set-Content "$dir\Cleanup\Handoff-receipt.json"
             Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'OpenHandoff') 'Receipt hidden'
+            Assert-True (Get-CollectorView $entry $true $boot).CanPrepareB 'Optional repeat missing after handoff'
+            $b=[pscustomobject]@{PreparedBoot=$boot.ToString('o');PreparationComplete=$false;Finished=$false;EarlyDebugSavedUtc=$null}
+            $bp=Join-Path $dir 'Cleanup\PhaseB-state.json'
+            $b|ConvertTo-Json|Set-Content $bp
+            Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Review') 'Partial preparation offered a restart'
+            $b.PreparationComplete=$true; $b|ConvertTo-Json|Set-Content $bp
+            Assert-True ((Get-CollectorView $entry $true $boot).Action -eq 'Instructions') 'B offered premature finish'
+            $view=Get-CollectorView $entry $true $boot.AddMinutes(1)
+            Assert-True ($view.Action -eq 'SaveDebugB' -and $view.ActiveB -and $view.NotesPass -eq 'PassB') 'Missing B capture routing'
+            $b.EarlyDebugSavedUtc=$boot.AddMinutes(1).ToString('o'); $b|ConvertTo-Json|Set-Content $bp
+            Assert-True ((Get-CollectorView $entry $true $boot.AddMinutes(2)).Action -eq 'FinishB') 'B finish missing'
+        }
+    }
+    if (!$Baseline) {
+        Test-Case 'Pass B desktop buttons run the correct CLI stages in both finish and recovery workflows' {
+            $ToolRoot=Join-Path $Root 'WpfTools'
+            $null=New-Item -ItemType Directory $ToolRoot
+            $uiScript=Join-Path $ToolRoot 'SWP-Perf.ps1'
+            $Executable=$uiScript
+            @'
+param($Stage,$Pass,$Case)
+@{Stage=$Stage;Pass=$Pass;Case=$Case}|ConvertTo-Json -Compress|Add-Content "$Case\actions.jsonl"
+$file=Join-Path $Case 'Cleanup\PhaseB-state.json'
+switch ($Stage) {
+    'PrepareB' { @{PreparedBoot='2001-01-01T00:00:00Z';PreparationComplete=$true;Finished=$false}|ConvertTo-Json|Set-Content $file }
+    'SaveDebug' { $b=Get-Content $file -Raw|ConvertFrom-Json; $b|Add-Member -NotePropertyName EarlyDebugSavedUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o'));$b|ConvertTo-Json|Set-Content $file }
+    'FinishB' { $b=Get-Content $file -Raw|ConvertFrom-Json;$b.Finished=$true;$b|ConvertTo-Json|Set-Content $file }
+}
+'@ | Set-Content -LiteralPath $uiScript
+            $realFactory=(Get-Command New-CollectorWindow).ScriptBlock
+            function Confirm-CollectorAction { $true }
+            function Get-CaseCatalog { [pscustomobject]@{Path=$guiCase;Open=$true;Phase=[pscustomobject]@{Finished=$true;TraceSaved=$true}} }
+            function New-CollectorWindow {
+                $w=& $realFactory
+                $script:guiProbe.Window=$w
+                $w
+            }
+            foreach ($recover in $false,$true) {
+                $guiCase=Join-Path $Root ("GuiCase-"+$recover)
+                $null=New-Item -ItemType Directory "$guiCase\Cleanup","$guiCase\Procmon" -Force
+                '{}'|Set-Content "$guiCase\Procmon\Operator-notes.json"
+                Add-Type -AssemblyName PresentationFramework
+                $script:guiProbe=@{Step=0;Error='';Window=$null;Deadline=[datetime]::UtcNow.AddSeconds(90)}
+                $driver=[Windows.Threading.DispatcherTimer]::new()
+                $driver.Interval=[TimeSpan]::FromMilliseconds(150)
+                $driver.Add_Tick({
+                    $w=$script:guiProbe.Window
+                    if (!$w) {return}
+                    try {
+                        if ($w.FindName('Title').Text -eq 'Case requires review' -or [datetime]::UtcNow -gt $script:guiProbe.Deadline) {
+                            throw "Window at step $($script:guiProbe.Step): $($w.FindName('Title').Text), $($w.FindName('ProgressLabel').Text), $($w.FindName('Instruction').Text), $($w.FindName('Output').Text)"
+                        }
+                        $primary=$w.FindName('Primary')
+                        if (!$primary.IsEnabled) {return}
+                        $other=$w.FindName('Other')
+                        $button=$primary
+                        switch ($script:guiProbe.Step) {
+                            0 {$other.SelectedItem='Prepare Pass B';$button=$w.FindName('RunOther')}
+                            1 {
+                                if ($primary.Content -ne 'Save Pass B early logs') {throw "Unexpected post-restart button: $($primary.Content)"}
+                                if($recover){$other.SelectedItem='Recover Pass B and package';$button=$w.FindName('RunOther')}
+                            }
+                            2 {
+                                if ($recover) {$driver.Stop();$w.Close();return}
+                                if ($primary.Content -ne 'Finish B') {throw 'Early snapshot did not advance the dashboard'}
+                            }
+                            3 {if ($primary.Content -ne 'Package case') {throw 'B did not advance to packaging'}}
+                            4 {$driver.Stop();$w.Close();return}
+                        }
+                        $script:guiProbe.Step++
+                        $button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent))
+                    } catch {$script:guiProbe.Error=$_.Exception.Message;$driver.Stop();$w.Close()}
+                })
+                $driver.Start()
+                try { Show-CollectorWindow -RequestedCase $guiCase -SourcePath $uiScript } finally {$driver.Stop()}
+                Assert-True (!$script:guiProbe.Error) $script:guiProbe.Error
+                $actions=@(Get-Content "$guiCase\actions.jsonl"|ForEach-Object {$_|ConvertFrom-Json})
+                $expected=if($recover){'PrepareB,RecoverAndPackage'}else{'PrepareB,SaveDebug,FinishB,Package'}
+                Assert-True (($actions.Stage -join ',') -eq $expected -and $actions[1].Pass -eq 'PassB' -and !@($actions|Where-Object Case -ne $guiCase).Count) "Incorrect GUI dispatch: $($actions | ConvertTo-Json -Compress)"
+            }
         }
     }
     Test-Case 'StopTrace snapshots before merge' {
@@ -166,6 +247,7 @@ try {
             $Offset=[datetimeoffset]::new($Start)
             Assert-True ((Parse-StateDateTime $Offset).ToUniversalTime() -eq $Start) 'Typed DateTimeOffset changed.'
             Assert-True ((Parse-StateDateTime $Start.ToString('o')).ToUniversalTime() -eq $Start) 'ISO roundtrip failed.'
+            Assert-True ((Parse-StateDateTime '2001-01-01T01:00:00+01:00') -eq (Parse-StateDateTime '2001-01-01T00:00:00Z')) 'Operator times without fractional seconds lost their offset.'
             Assert-True ((Parse-StateDateTime '15/06/2001 08.09.10').Year -eq 2001) 'Existing European state format lost.'
         }
         if ($VendorKitRoot) {
@@ -440,6 +522,10 @@ Write-Output 'file name = diag-[fresh].zip'
             Assert-True ((Get-Content -LiteralPath ($Archive.FullName+'.sha256.txt') -Raw) -match (Get-FileHash -LiteralPath $Archive.FullName).Hash) 'Outer ZIP checksum missing or incorrect.'
         }
         Test-Case 'Complete required-artifact fixture gets a distinct packaging result' {
+            $exportRows = foreach ($channel in 'System','Application') {
+                [pscustomobject]@{Channel=$channel;Status='Exported';Bytes=(Get-Item "$Case\Events\$channel.evtx").Length}
+            }
+            $exportRows | Export-Csv "$Case\Events\Channel-exports.csv" -NoTypeInformation
             Get-ChildItem -LiteralPath $Case -Recurse -File|Where-Object Name -in @('Collection-errors.txt','Early-debug-copy-error.txt','Fallback-debug-copy-error.txt')|Remove-Item -Force
             $LastGoodDiagnostic|ConvertTo-Json -Depth 6|Set-Content -LiteralPath "$Case\Trend\FinalDiagnostics\Last-diagnostic-status.json"
             '{"AMDebugRequested":false}'|Set-Content -LiteralPath "$Case\Cleanup\PersistentAMTrace\Restored-trace-assessment.json"
@@ -460,14 +546,86 @@ Write-Output 'file name = diag-[fresh].zip'
             $BStart=$Start.AddSeconds(120);$BEnd=$BStart.AddSeconds(20)
             $BFolder=Join-Path $Case 'Trend\PassB\VerifiedToolMetrics\Archive-1';New-Item -ItemType Directory $BFolder -Force|Out-Null
             New-ZipFixture -Path "$BFolder\DSTool-METRICS-B.zip" -Text (New-RecordsText -At $BStart)
-            [pscustomobject]@{RecordedBootUtc=$BStart.ToString('o');ReproductionEndUtc=$BEnd.ToString('o');FinishedAtUtc=$BEnd.AddSeconds(1).ToString('o');ComputerName=$env:COMPUTERNAME}|ConvertTo-Json|Set-Content -LiteralPath "$Case\Cleanup\PhaseB-state.json"
+            [pscustomobject]@{RecordedBootUtc=$BStart.ToString('o');ReproductionEndUtc=$BEnd.ToString('o');FinishedAtUtc=$BEnd.AddSeconds(1).ToString('o');ComputerName=$env:COMPUTERNAME;Finished=$true}|ConvertTo-Json|Set-Content -LiteralPath "$Case\Cleanup\PhaseB-state.json"
+            New-Item -ItemType Directory "$Case\Procmon","$Case\Events\PassB","$Case\Trend\AMDebug\PassB-Early-test" -Force | Out-Null
+            $segments = foreach ($name in 'boot.pml','boot-1.pml') {
+                $file="$Case\Procmon\$name"; [IO.File]::WriteAllBytes($file,[byte[]](1,2,3))
+                [pscustomobject]@{Name=$name;Bytes=3;SHA256=(Get-FileHash $file).Hash}
+            }
+            $segments | Export-Csv "$Case\Procmon\PassB-segments.csv" -NoTypeInformation
+            Copy-Item "$Case\Events\*.evtx","$Case\Events\Channel-exports.csv" "$Case\Events\PassB"
+            $mark=[pscustomobject]@{AuthenticatedUtc=$BStart.ToString('o');ExplorerUtc=$BEnd.ToString('o');SessionCorroborated=$true;TimeZone=(Get-TimeZone).Id}
+            $mark|ConvertTo-Json|Set-Content "$Case\Procmon\SignIn-milestones.json"
+            $lo=$BStart.AddSeconds(1).ToLocalTime().ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
+            $hi=$BStart.AddSeconds(2).ToLocalTime().ToString('yyyy/MM/dd HH:mm:ss.fff',[cultureinfo]::InvariantCulture)
+            @("$lo,[00001:00002] >>> SCANFILE: C:\sampleB.dll,[fixture]","$hi,[00001:00002] <<< SCANFILE: scan time (microsecond) = 3000")|Set-Content "$Case\Trend\AMDebug\PassB-Early-test\Amsp_LocalDebugLog.log"
+            [pscustomobject]@{CredentialSubmittedAt=$BStart.ToString('o');DesktopReadyAt=$BEnd.ToString('o')}|ConvertTo-Json|Set-Content "$Case\Procmon\Operator-notes.json"
             $A=Get-CaseEvidenceAssessment
             Assert-True ($A.MetricsByPass.Count -eq 2 -and $A.EvidenceGaps.Count -eq 0 -and $A.MetricsByPass[1].MaximumGapSeconds -eq 5) ($A|ConvertTo-Json -Depth 8)
+            Assert-True ($A.PassBSignInScans.SignInPairs -eq 1 -and $A.SignInScans.SignInPairs -eq 1) 'Pass-specific AMSP evidence mixed'
+        }
+        Test-Case 'Combined ZIP reports a lost segment and failed B channel, and retains A events' {
+            $ArchiveDirectory=Join-Path $Root 'Combined'
+            $pml="$Case\Procmon\boot-1.pml"
+            $manifest="$Case\Events\PassB\Channel-exports.csv"
+            $original=[IO.File]::ReadAllBytes($manifest)
+            try {
+                Remove-Item -LiteralPath $pml
+                $rows=@(Import-Csv $manifest);($rows|Where-Object Channel -eq 'Application').Status='Failed'
+                $rows|Export-Csv $manifest -NoTypeInformation
+                New-CaseArchive
+                $zip=[IO.Compression.ZipFile]::OpenRead((Get-ChildItem $ArchiveDirectory -Filter '*.zip').FullName)
+                try {
+                    $entry=$zip.Entries | Where-Object Name -eq 'Evidence-assessment.json'
+                    $reader=[IO.StreamReader]::new($entry.Open())
+                    try {$report=$reader.ReadToEnd()|ConvertFrom-Json} finally {$reader.Dispose()}
+                    $missing=$report.EvidenceGaps -join ' '
+                    Assert-True ($missing -match 'boot-1.pml' -and $missing -match 'PassB event export.*Application' -and $report.Status -eq 'EvidenceGapsRemain') $missing
+                    Assert-True (@($zip.Entries|Where-Object Name -eq 'System.evtx').Count -eq 2) 'One pass overwrote the other'
+                } finally {$zip.Dispose()}
+                [IO.File]::WriteAllBytes($pml,[byte[]](1,2,4))
+                Assert-True ((Get-PmlEvidenceGaps "$Case\Procmon") -match 'changed') 'Same-size replacement passed'
+            } finally {[IO.File]::WriteAllBytes($pml,[byte[]](1,2,3));[IO.File]::WriteAllBytes($manifest,$original)}
         }
         Test-Case 'Case renaming preserves diagnostic and context verification' {
             $Renamed=$Case+'-Renamed';Move-Item -LiteralPath $Case -Destination $Renamed;$script:Case=$Renamed
             $A=Get-CaseEvidenceAssessment
             Assert-True ($A.EvidenceGaps.Count -eq 0) ($A|ConvertTo-Json -Depth 8)
+        }
+        Test-Case 'Pass B recovery retrieves events and restores tracing without a saved PML' {
+            Import-CollectorFunctions
+            $Case=Join-Path $Root 'Case-Recovery-B'
+            $boot=[datetime]::UtcNow.AddHours(-1)
+            $null=New-Item -ItemType Directory "$Case\Procmon","$Case\Trend","$Case\Cleanup","$Case\Events" -Force
+            $phase=[pscustomobject]@{ComputerName=$env:COMPUTERNAME;Scenario='Reboot';PreparedAt=[datetime]::UtcNow.ToString('o');PreparedBoot=$boot.ToString('o');RunId=[guid]::NewGuid().ToString('N');Finished=$false;PreparationComplete=$false}
+            $phase|ConvertTo-Json|Set-Content "$Case\Cleanup\PhaseB-state.json"
+            function Get-CimInstance {param($ClassName,$Filter) if($ClassName -eq 'Win32_OperatingSystem'){[pscustomobject]@{LastBootUpTime=$boot}}}
+            function Get-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction)}
+            function Get-Process {param($ErrorAction)}
+            function Get-WinEvent {param($FilterHashtable,$ErrorAction)}
+            function Copy-ToolMetrics {param($PassFolder,$SinceUtc,$RequiredEndUtc) 'attempted'|Set-Content "$PassFolder\metrics-attempt.txt"}
+            function Copy-EvidenceFolder {param($Source,$Target,$Log)}
+            function Save-AMDebug {param($Label)}
+            function Restore-PersistentAMTrace {param($Case) 'restored'|Set-Content "$Case\Cleanup\restored.txt"}
+            function Save-NativeEvidence {param($Exe,$Arguments,$Output)}
+            function wevtutil.exe {param($verb,$channel,$file,$overwrite) 'fixture'|Set-Content -LiteralPath $file;$global:LASTEXITCODE=0}
+            $SkipDiagnostics=$true
+            Invoke-Finish -Pass PassB -Recovery
+            Assert-True ((Test-Path "$Case\Trend\PassB\metrics-attempt.txt") -and (Test-Path "$Case\Cleanup\restored.txt") -and (Test-Path "$Case\Events\PassB\System.evtx")) 'Interrupted B blocked independent retrieval'
+            Assert-True (!(Test-Path "$Case\Procmon\PassB-segments.csv") -and (Get-PmlEvidenceGaps "$Case\Procmon") -match 'missing') 'Recovery verified an absent PML'
+            $phase.PreparedBoot=$boot.AddHours(-2).ToString('o')
+            $phase.PreparedAt=$boot.AddMinutes(-1).ToString('o')
+            $phase.PreparationComplete=$true
+            $phase|ConvertTo-Json|Set-Content "$Case\Cleanup\PhaseB-state.json"
+            $live="$Case\Trend\LiveMetrics\PassB\$($phase.RunId)"
+            $null=New-Item -ItemType Directory -Path $live -Force
+            $boot.ToString('o')|Set-Content "$live\BootUtc.txt"
+            Assert-Throws {Invoke-Finish -Pass PassB} 'Normal Finish B accepted an empty capture'
+            foreach ($name in 'login.pml','login-1.pml') { [IO.File]::WriteAllBytes("$Case\Procmon\$name",[byte[]](1,2,3)) }
+            Invoke-Finish -Pass PassB
+            $rows=@(Import-Csv "$Case\Procmon\PassB-segments.csv")
+            Assert-True ($rows.Count -eq 2 -and !@(Get-PmlEvidenceGaps "$Case\Procmon" $phase.RunId).Count) 'Normal finish did not inventory both segments'
+            Assert-True ((Get-Content "$Case\Cleanup\PhaseB-state.json" -Raw|ConvertFrom-Json).Finished) 'Successful B finish was not persisted'
         }
         Test-Case 'Cleanup retains tools, supports KeepEvidence, and only deletes its fixture case root' {
             $CleanupRoot=Join-Path $Root 'CleanupOnly';New-Item -ItemType Directory "$CleanupRoot\CASE-X" -Force|Out-Null
@@ -620,6 +778,18 @@ Write-Output 'file name = diag-[fresh].zip'
             $saved=@(Get-ChildItem -LiteralPath $dest -Recurse -Filter '*_jsonRecords.json')
             Assert-True ($saved.Count -eq 1 -and @(Get-Content -LiteralPath "$dest\Batches.jsonl").Count -eq 1 -and (Get-ToolMetricsAssessment -Paths $saved[0].FullName -SinceUtc $Start -RequiredEndUtc $End).ArtifactRecordsVerified) 'Saved series did not survive source removal.'
         }
+        Test-Case 'Final loose metrics exclude old samples and a batch already preserved live' {
+            $src=Join-Path $Root 'TwoMetricsRuns';$dest=Join-Path $Root 'FinalBatches';$live=Join-Path $Root 'LiveBatches'
+            $old='20010615-141900';$new='20010615-153000'
+            $null=New-Item -ItemType Directory "$src\$old","$src\$new","$live\$new",$dest -Force
+            New-RecordsText -At $Start.AddHours(-1)|Set-Content "$src\$old\141905_jsonRecords.json"
+            New-RecordsText -At $Start|Set-Content "$src\$new\153005_jsonRecords.json"
+            Copy-Item "$src\$new\153005_jsonRecords.json" "$live\$new"
+            New-RecordsText -At $Start.AddSeconds(15)|Set-Content "$src\$new\153020_jsonRecords.json"
+            Copy-NewMetricBatches $src $dest $Start @{} $live
+            $saved=@(Get-ChildItem $dest -Recurse -Filter '*_jsonRecords.json')
+            Assert-True ($saved.Count -eq 1 -and $saved[0].Name -eq '153020_jsonRecords.json' -and (Test-Path "$dest\Skipped-batches.jsonl")) 'Old or duplicate batch included, or new batch lost.'
+        }
         Test-Case 'Wrong case or run cannot control metrics task or cancel WPR' {
             $ToolRoot='C:\Program Files\SWP-PerfTools';$ToolFolder=Join-Path $ToolRoot DSASupportTool
             $valid='C:\SWP-Perf\CASE-A';$id=[guid]::NewGuid().ToString('N')
@@ -676,7 +846,7 @@ Write-Output 'file name = diag-[fresh].zip'
     [pscustomobject]@{RunAt=(Get-Date -Format o);PowerShell=$PSVersionTable.PSVersion.ToString();Source=$SourcePath;SourceSHA256=$SourceHashBefore;SourceSHA256After=$SourceHashAfter;SourceChangedDuringRun=($SourceHashBefore -ne $SourceHashAfter);Baseline=[bool]$Baseline;Results=@($Results.ToArray());Note='Real Windows file/ZIP/ACL/native-CMD tests; Trend service, reboot, WPR and scheduled-task interactions are simulated or inspected, not a real customer capture.'} |
         ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $ResultsFolder $(if($Baseline){'Baseline-results.json'}else{'Regression-results.json'})) -Encoding UTF8
     # Only this test run's random fixture root is deleted; no collector Cleanup action runs.
-    if ($Root.StartsWith($env:TEMP,[StringComparison]::OrdinalIgnoreCase) -and (Split-Path $Root -Leaf) -like 'SWP Collector Tests *') { Remove-Item -LiteralPath $Root -Recurse -Force }
+    if ((Split-Path $Root -Parent) -eq $fixtureBase -and (Split-Path $Root -Leaf) -like 'SWP Collector Tests *') { Remove-Item -LiteralPath $Root -Recurse -Force }
 }
 if (@($Results|Where-Object Status -eq 'FAIL').Count) { exit 1 }
 exit 0

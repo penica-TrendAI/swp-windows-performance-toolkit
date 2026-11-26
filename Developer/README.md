@@ -26,7 +26,7 @@ $r.Results | Group-Object Status | Select-Object Name, Count
 $r | Select-Object PowerShell, SourceSHA256, SourceSHA256After, SourceChangedDuringRun
 ```
 
-With the pinned vendor bundles and the long publication test enabled, the suite runs **45 tests** using generated inputs. Omit `-VendorKitRoot` on a source-only checkout to skip the vendor installation test. Omit `-LongPublicationTest` for a shorter run. `-Baseline` selects checks used to compare an older collector revision.
+With the pinned vendor bundles and the long publication test enabled, the suite uses generated inputs and includes the desktop button and delayed-publication tests. Omit `-VendorKitRoot` on a source-only checkout to skip the vendor installation test. Omit `-LongPublicationTest` for a shorter run. `-Baseline` selects checks used to compare an older collector revision.
 
 ## Change and validate the collector
 
@@ -63,3 +63,10 @@ Use `--output C:\SWP-Release\SWP-Customer-Kit.zip` to build at an unused path. B
 For an ordinary rebuild, the two vendor tools come from the existing tracked ZIP. A local copy under `Tools` takes precedence. Every copy must match its pinned hash. For a vendor upgrade, supply the new originals locally, update the pins and installer checks, validate the build, then commit the refreshed ZIP alongside the source change. [Vendor prerequisites](../Tools/README.md)
 
 `Package-info.json` in the ZIP gives the packaged collector hash, the collector hash from the last recorded validation and a match flag. A source update refreshes the download immediately after the workflow succeeds. The validation summary changes when maintainers record new results.
+
+
+### Pass B verification
+
+Exercise the dashboard with a finished, open Pass A case. Verify the optional prepare action, restart instructions, early snapshot, separate notes, Finish B, Package and B-specific recovery after interruption. The manual Procmon steps require an administrator on the Windows desktop. Preserve all PML segments before finishing.
+
+`Procmon/PassB-segments.csv` records the segments observed at finish. Reopen the combined ZIP and check its assessment after removing or replacing a segment in a fixture. Each pass has its own event export manifest. Failed exports for known channels are evidence gaps. Also test recovery before restart and after a boot without a saved PML. A successful archive hash verifies file integrity independently of sign-in timing coverage.
