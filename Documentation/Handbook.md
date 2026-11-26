@@ -243,7 +243,7 @@ wpr.exe -status
 
 Expect both Trend services to run and the temporary task to be absent. Verify the case’s WPR session ended. An unrelated WPR recording belongs to its owner. If Procmon was used, turn off its boot logging in the GUI and exit. The policy administrator separately restores and verifies the computer’s original protection and inheritance. Record the result. An original INI that requested debugging will still request it after restoration.
 
-**Delete all case files only after handoff.** Confirm there is a matching external archive for every case and that any updated evidence has been packaged. Cleanup checks receipts, archive hashes and evidence before removing the case root. If archives were moved, point `-ArchiveDirectory` at their new local directory. Preserve any backup involved in a conflict.
+**Package the closure record.** Retained cleanup writes the final Defender and SysMain observations to `Cleanup\Collector-closed.json`. For CASE-01, run `& $swp -Stage Package -Case 'C:\SWP-Perf\CASE-01'` and transfer the newest ZIP and checksum. Substitute the actual case path. Before deleting the case root, Cleanup verifies each case against its external handoff. Use `-ArchiveDirectory` for moved handoffs.
 
 ```powershell
 & $swp -Stage Cleanup

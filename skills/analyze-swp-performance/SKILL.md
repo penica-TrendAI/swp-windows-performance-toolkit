@@ -13,6 +13,8 @@ Work from the supplied case. Derive customer, host, account, time zone, Windows 
 2. Extract a working copy. Read Evidence-assessment.json, the latest Packaging-summary, File-inventory.csv and operator notes. Check actual files and time coverage independently of the collector’s success label. Older kits can have different paths or lack assessments. Locate equivalent raw artifacts and record which checks are possible.
 3. If only a native diagnostic or metrics ZIP arrived, analyze the available agent data, state its time window, and identify the additional evidence needed for each unanswered question. Keep different hosts, boots, retries, collection passes and later diagnostics distinguishable.
 
+For an optional Procmon repeat, read `Procmon/Operator-notes.json`, `Procmon/SignIn-milestones.json`, `Trend/PassB-Timed-scans.csv` and `PassBSignInScans` together. Verify the saved PML segments against `Procmon/PassB-segments.csv`. Compare `Events/Channel-exports.csv` for A and `Events/PassB/Channel-exports.csv` for B. Report timing coverage and scan totals separately for each reproduction.
+
 ## Map evidence to the investigation
 
 | Case-relative artifact | Tool and purpose |

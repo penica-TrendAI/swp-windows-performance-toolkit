@@ -164,7 +164,13 @@ Confirm that WPR and Procmon are idle and any Procmon boot logging from this cas
 
 Check the output for restoration errors. The action removes the scheduled collector and restores the saved tool configuration and Windows event channel settings. It also restores the original agent INI if collection stopped before that step. It cancels WPR only when a saved case state says this kit successfully armed an unsaved recording. Without that ownership record, WPR is left alone for manual coordination. It refuses recursive deletion through links/junctions or while an unidentified support-tool process remains. Use the Trend management console for self-protection restoration.
 
-**After support has the evidence**, run `& $swp -Stage Cleanup` if the case should be deleted. This removes **all cases under `C:\SWP-Perf`**. Each case needs a hash-verified external handoff. If a case changed since packaging, run Package again for that case before cleanup. If you moved the handoffs, pass their current directory with `-ArchiveDirectory`. Keep the Program Files tool installation for the next test.
+Retaining a case adds `Cleanup\Collector-closed.json` with the restoration time and the final Defender and SysMain observations. Package the retained case once more to include that record. Use the case path printed during your capture. For example, for CASE-01 run the following command.
+
+```powershell
+& $swp -Stage Package -Case 'C:\SWP-Perf\CASE-01'
+```
+
+Transfer the newest verified ZIP and its matching checksum. **After support has the evidence**, run `& $swp -Stage Cleanup` if the case should be deleted. This removes **all cases under `C:\SWP-Perf`**. Each case needs a hash-verified external handoff. Package each retained case that changed. If you moved the handoffs, pass their current directory with `-ArchiveDirectory`. Keep the Program Files tool installation for the next test.
 
 ## Optional Procmon pass
 
