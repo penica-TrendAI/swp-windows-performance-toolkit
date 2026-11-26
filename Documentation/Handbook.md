@@ -23,10 +23,10 @@ DSA means Deep Security Agent. AMSP is the Trend anti-malware component. Windows
 
 ## Participant instructions
 
-**What you will do.** Sign in to Windows the same way you normally do when the computer is slow. IT needs the timing of what you see. You can do this with your usual account and permissions.
+**What you will do.** Use the sign-in timing agreed with IT. Record when you enter your credentials and when your desktop responds. You can do this with your usual account and permissions.
 
 1. Save your work and close anything you would lose on sign-out or restart. Agree with IT which application to open, if any, and what “ready” means. For example, the desktop accepts a click or the application opens the document you normally use.
-2. Stay signed in until IT says recording is ready. If IT asks for **sign-out**, select **Start → account → Sign out**, then sign back in to the same account. If IT asks for **restart**, select **Start → Power → Restart**, then sign in once. Locking the screen or closing a Remote Desktop window leaves the old session in place.
+2. Stay signed in until IT says recording is ready. If IT asks for **sign-out**, select **Start → account → Sign out**, then sign back in to the same account. If IT asks for **restart**, select **Start → Power → Restart**, then follow the agreed timing. **For per-file scan timings, stay at the sign-in screen until IT gives you the go-ahead.** If IT asked for your usual immediate sign-in, sign in at your normal pace. Locking the screen or closing a Remote Desktop window leaves the old session in place.
 3. Note the local time when you submit your credentials and when the desktop responds. If an application is part of the test, launch it once and note when you click it and when it becomes usable. For a sign-in-only test, leave applications closed.
 4. Tell IT **desktop ready** or **application ready** as soon as you reach the agreed point. Report an error, timeout or a run that felt normal. Include seconds when you could observe them. If you only know the minute, say so.
 
@@ -51,7 +51,7 @@ Keep passwords, PINs and authentication codes private. IT may collect process na
 | Question | Choice |
 |---|---|
 | Is full sign-out sufficient to reproduce it? | Choose `SignOutSignIn`. Keep the computer on. WPR runs machine-wide and the SYSTEM metrics task starts before sign-out. |
-| Does the delay require a fresh boot? | Choose `Reboot`. Prepare once, restart once, then sign in. WPR starts with Windows and the metrics task starts at system startup. |
+| Does the delay require a fresh boot? | Choose `Reboot`. Agree on timing before restart. For per-file scans, hold at the sign-in screen for a verified scan. To measure the usual immediate sign-in, use the user’s normal timing. |
 | Is sign-in the only symptom? | End at usable desktop. Set `Applications` to `[]` in the case notes. |
 | Is an app slow on first launch? | Include the agreed launch in the same recording and stop when it becomes usable. |
 | Does support need Procmon stacks or additional I/O detail? | Finish Pass A first. Use the optional Procmon repeat only for that outstanding question. |
@@ -122,7 +122,9 @@ $cmdLog = Join-Path $env:ProgramFiles 'SWP-PerfTools\DSASupportTool\logs\DSA_Sup
 Get-Content -LiteralPath $cmdLog -Tail 30
 ```
 
-Hand control to the participant once prepared. A preparation error can leave recoverable settings in place. Keep the case and use “Recover an interrupted capture”.
+**First sign-in after restart.** For per-file timings, arrange a second device before reboot. Keep the participant at the sign-in screen. Through an elevated noninteractive management session on the restarted PC, run the case-specific `CheckSignInReady` command shown in the GUI. At **READY TO SIGN IN**, give the go-ahead. If there is no pair, retry or record unverified coverage and finish or recover. Record the hold separately from credential-to-desktop time. A fixed delay or a running service cannot confirm a scan. For the usual immediate sign-in, keep normal timing and label the run.
+
+If preparation fails, retain the case and follow “Recover an interrupted capture”.
 
 ## Test your own administrator account
 
@@ -139,7 +141,7 @@ $user = Read-Host 'Enter the account printed by whoami on your normal desktop'
 & $swp -Stage Prepare -Scenario SignOutSignIn -AffectedUser $user
 ```
 
-**3. Reproduce.** Wait for **Prepared**. Fully sign out or restart as chosen, then sign in once as the account you noted. Record when you submit credentials and when the desktop responds. Launch an agreed app normally and record its launch/ready times, if part of the test. For sign-in only, stop at usable desktop.
+**3. Reproduce.** After **Prepared**, sign out and back in for a same-boot test. For per-file timings after restart, stay at the sign-in screen. From a second device, run the **CheckSignInReady** command shown by the collector in an elevated remote shell on this PC. Sign in at **READY TO SIGN IN**. For the usual immediate sign-in, use normal timing. Record credential submission, usable desktop and any agreed app launch/ready times.
 
 **4. Stop immediately.** Reopen the collector and click **Stop trace now**, or open a **new elevated Windows PowerShell**. The previous window and its variables are gone. Run these lines before waiting for metrics. Note any delay opening the elevated window.
 
@@ -339,7 +341,7 @@ The default publication wait permits 600 seconds without progress and has an ove
 Use the optional repeat when support needs Windows file operations from a separate restart. Allow space for the PML files and the combined ZIP. Obtain a compatible Process Monitor build. [Microsoft Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 
 1. Finish A and confirm trace settings were restored. Before cleanup, coordinate self-protection with the policy owner. Select **Prepare Pass B** in the action list, click **Run selected action** and confirm.
-2. Open Procmon as administrator, stop live capture and choose **Options → Enable Boot Logging** without thread profiling. Close Procmon, restart Windows and repeat the same sign-in and launches.
+2. Open Procmon as administrator, stop live capture and choose **Options → Enable Boot Logging** without thread profiling. Close Procmon and restart. For delayed sign-in, have the administrator verify `CheckSignInReady -Pass PassB` before credentials. Repeat the agreed timing and launches.
 3. At the agreed milestone, reopen the collector and click **Save Pass B early logs**. In Procmon save every PML segment in the displayed case’s `Procmon` folder. Turn off boot logging and exit Procmon.
 4. Select **Open Pass B timing notes** and enter B’s actual times. Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` for B’s scan coverage, PML integrity and event exports.
 
@@ -356,14 +358,14 @@ If a PML could not be saved, close Procmon after disabling boot logging and choo
 
 ## Stage reference
 
-The script takes one `-Stage` per invocation. `-Action` is an alias for `-Stage`. Explicit stages run directly. With no stage the desktop opens the window and a headless session displays Help. Both routes use the saved case state.
+Use one `-Stage` per command (`-Action` is an alias). Both GUI and CLI use the saved case.
 
 | Stage | Purpose and expected next step |
 |---|---|
-| `Gui` | Opens the interactive administrator window. Available from the installed Start menu shortcut. |
-| `Help` | Prints a short workflow summary. Use this handbook for the same-boot and recovery paths. |
+| `Gui`, `Help` | Open the administrator window or print a workflow summary. |
 | `InstallTools` | Run from the extracted kit. Installs the two verified vendor bundles, the collector and both WPR profiles into Program Files. |
 | `Prepare` | Creates a fresh case, backups, temporary config and an owned metrics task. Arms the requested WPR scenario. Wait for Prepared. |
+| `CheckSignInReady` | After restart, run through an elevated management session while the user waits. Give the go-ahead after a fresh paired test scan. |
 | `StopTrace` | After the milestone, starts a raw AMSP snapshot, saves the owned WPR ETL, records quality and attempts to correlate the sign-in. |
 | `Finish` | Retrieves Pass A evidence, requests diagnostics unless skipped, exports events and attempts trace restoration. Use Package separately. |
 | `FinishAndPackage` | Runs Finish for Pass A, then creates the verified full-case archive. |

@@ -6,7 +6,7 @@
 
 For role-specific instructions, see the [full handbook](Documentation/SWP-Perf-Handbook.pdf). Give the person signing in the [one-page participant instructions](Documentation/Participant-sheet.pdf). When the affected user is also a local administrator, use the [solo administrator checklist](Documentation/Administrator-participant.pdf) or its [copyable commands](Documentation/Administrator-participant.md). Developers can start with the [maintenance guide](Developer/README.md).
 
-Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI Vision One Server & Workload Protection / Deep Security Agent already installed. It collects the slow reboot, sign-in and first application launches in one pass. The scheduled Trend CMD tool samples agent metrics every five seconds for 15 minutes after initialization. The task has a 45-minute cap. WPR captures Windows file I/O and process starts. The script separately checks whether AMSP logged paired per-file scan timings during sign-in. On some first sign-ins the agent starts detailed logging after Explorer appears. If the delay also occurs after signing out, the same-boot scenario provides a second way to measure it.
+Use this kit on one affected Windows 10 or Windows 11 computer with the TrendAI Vision One Server & Workload Protection / Deep Security Agent already installed. It collects the slow reboot, sign-in and first application launches in one pass. The scheduled Trend CMD tool samples agent metrics every five seconds for 15 minutes after initialization. The task has a 45-minute cap. WPR captures Windows file I/O and process starts. The script separately checks whether AMSP logged paired per-file scan timings during sign-in. An immediate sign-in in the lab had no paired scan records between authentication and Explorer. A delayed first sign-in captured them once a fresh test-file scan was confirmed before credentials. If the delay also occurs after signing out, the same-boot scenario provides a second way to measure it.
 
 ## 1. Set up on the affected computer
 
@@ -41,6 +41,7 @@ After installation, open **SWP Performance Collector** from the Windows Start me
 | When | Collector window | Command line |
 |---|---|---|
 | Before measuring | Confirm the affected account and scenario. Click **Prepare new capture** and wait for **Prepared**. | `& $swp -Stage Prepare -Scenario Reboot`, or choose `SignOutSignIn`. Add `-AffectedUser` for the agreed account. |
+| At the sign-in screen after restart | For per-file timings, the participant waits. Copy the case-specific command shown in the window before reboot. | From another device, run `& $swp -Stage CheckSignInReady` on the endpoint and give the go-ahead at **READY TO SIGN IN**. |
 | At the agreed sign-in or app milestone | Reopen the shortcut. Check the affected account and case, then **Stop trace now**. | `& $swp -Stage StopTrace` |
 | After the trace is saved | Use **Open timing notes**, save the times, then **Finish and package**. Keep the window open and watch the action output. | Complete the notes and run `& $swp -Stage FinishAndPackage`. |
 | After handoff | **Open handoff folder**. Transfer the ZIP and checksum. Select **Restore settings and keep evidence**. | `& $swp -Stage Cleanup -KeepEvidence` |
@@ -74,9 +75,25 @@ Use the default `-Scenario Reboot` when a restart is needed to reproduce the del
 
 Substitute the actual interactive account. The script verifies a signed Windows executable produces a timed AMSP scan before arming a machine-wide WPR recording. When it prints **Prepared**, save work, choose **Sign out**, and sign back in to that account. A lock/unlock or RDP disconnect/reconnect does not reproduce a full sign-in. If the control fails, keep the session open and use recovery. The default WPR buffer allocation is 32 MiB. Use `-WprBuffers LargerBuffers` (128 MiB) on a fresh run if the earlier ETL reported event loss and the machine has sufficient memory.
 
+### First sign-in after a restart
+
+**If the goal is per-file scan timings, use the delayed first sign-in directly.** Before restarting, agree how the administrator will contact the participant and confirm access to an elevated, noninteractive PowerShell session on the endpoint from another device. Arrange a manual first sign-in for this run. The administrator can also be the participant. Copy the command for the prepared case from the collector window or its action output before closing it.
+
+1. **Participant:** Restart Windows and stay at the sign-in screen. Enter your credentials when the administrator gives the go-ahead.
+2. **Administrator:** While the screen is held, run the command below **on the restarted endpoint** through the existing management connection. A console or Remote Desktop sign-in would consume the first sign-in. This example selects the active case and Pass A. For a Procmon repeat, use `-Pass PassB`.
+
+   ```powershell
+   $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'
+   & $swp -Stage CheckSignInReady -Pass PassA
+   ```
+3. At **READY TO SIGN IN**, tell the participant to sign in. The check copied and launched a uniquely named, signed Windows executable and found its matching scan start and completion in this boot's AMSP logs. Trace activity, a running service or a fixed wait cannot establish that result. A check that finds no pair can be retried while the participant waits. If the check is unavailable or keeps failing, agree whether to finish with unverified coverage or use recovery. Record that decision.
+4. Record the timing choice, reboot and go-ahead in `Test-notes.txt`. Enter credential submission and usable desktop separately in `Operator-notes.json`. The hold allows startup work to finish and can change the symptom. When the objective is the user's usual immediate sign-in, have them sign in at their normal pace and label that run **immediate**. Use the finished case's sign-in coverage assessment to determine which scans were captured during either run.
+
+The check records its result under `Trend\<pass>-Cold-signin-control.json`. Its test executable is identifiable by its `ScanControl-` directory. Keep the control separate from application scans when interpreting timings.
+
 ## 3. Reproduce and save the trace
 
-1. For the reboot scenario, restart Windows manually. For the same-boot scenario, sign out and sign back in. Aim for the first two to three minutes or one representative slow launch; do not leave WPR running while waiting for the 15-minute metrics collection.
+1. For a reboot, follow the first-sign-in procedure above. For a same-boot capture, sign out and sign back in after **Prepared**. Aim for the first two to three minutes or one representative slow launch; do not leave WPR running while waiting for the 15-minute metrics collection.
 2. Sign in as the affected user and reproduce the slow first launches. Record the times of restart, credential submission, usable desktop, each app launch and when it became usable. Include the time zone.
 3. At the agreed milestone, the affected person reports that the desktop or application is ready. If that person is a local administrator, they can open a new elevated PowerShell themselves. Otherwise the endpoint administrator stops WPR on that same computer, using the existing authorized administrative session or elevating locally after the milestone. Keep the affected person’s interactive session available for correlation. Do this before waiting for the DSA CMD task.
 
@@ -182,7 +199,8 @@ Finish Pass A and keep the case open. Do this **before Cleanup**, including Clea
 |---|---|
 | After Pass A | Select **Prepare Pass B** in the action list, click **Run selected action** and confirm. Wait for preparation to finish. |
 | Before restart | Open Procmon as administrator, stop live capture, enable **Options → Enable Boot Logging** without thread profiling, then exit Procmon and restart Windows. |
-| At the agreed milestone | Sign in and repeat the same launches. As soon as the delay ends, reopen the collector and click **Save Pass B early logs**. This records the end time and preserves the available AMSP rotations. |
+| At the sign-in screen | For per-file timings, hold for the administrator’s **READY TO SIGN IN** from `CheckSignInReady -Pass PassB`. For an immediate-sign-in comparison, repeat the timing used for Pass A. |
+| At the agreed milestone | Repeat the agreed launches. As soon as the delay ends, reopen the collector and click **Save Pass B early logs**. This records the end time and preserves the available AMSP rotations. |
 | Before finishing | Open Procmon as administrator. Save **every PML segment** into the displayed case’s `Procmon` folder, turn off boot logging and exit Procmon. Use **Open Pass B timing notes** for this repeat’s credential, desktop and application times. |
 | Handoff | Click **Finish B**, then **Package case**. Check `Evidence-assessment.json` in the new combined ZIP. Pass A event logs are in `Events`, Pass B in `Events\PassB`. Packaging checks the names, sizes and hashes of the PML files present at finish. |
 | If interrupted | Turn off boot logging and close Procmon. Choose **Recover Pass B and package** to retrieve available evidence even if you could not save a PML. Inspect the reported gaps. |

@@ -26,7 +26,7 @@ $swp = Join-Path $env:ProgramFiles 'SWP-PerfTools\SWP-Perf.ps1'
 & $swp -Stage Help
 ```
 
-A typical capture uses **Prepare → reproduce → StopTrace → FinishAndPackage**. Choose a reboot or a full sign-out and sign-in. Prepare allocates a case number and subsequent stages resume the active case. At the agreed milestone, stop WPR promptly. Complete the operator notes before packaging. Transfer the verified ZIP and checksum through the agreed private support channel. After transfer, `Cleanup -KeepEvidence` restores local settings and retains the files. Plain `Cleanup` operates on all local cases.
+A typical capture uses **Prepare → reproduce → StopTrace → FinishAndPackage**. Choose a reboot or a full sign-out and sign-in. For per-file timings after restart, keep the participant at the sign-in screen until the administrator confirms a fresh paired scan using `CheckSignInReady` from another device. Use normal timing to measure an immediate sign-in. Prepare allocates a case number and subsequent stages resume the active case. At the agreed milestone, stop WPR promptly. Complete the operator notes before packaging. Transfer the verified ZIP and checksum through the agreed private support channel. After transfer, `Cleanup -KeepEvidence` restores local settings and retains the files. Plain `Cleanup` operates on all local cases.
 
 ## Documentation and analysis
 
