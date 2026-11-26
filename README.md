@@ -2,6 +2,19 @@
 
 Investigate slow Windows sign-ins and first application launches on endpoints running TrendAI Vision One Server & Workload Protection or Deep Security Agent. The collector records Windows activity with WPR and gathers agent metrics, available per-file scan timings, event logs and a native Trend diagnostic into a verified case archive.
 
+## Customer download
+
+**[Download the full customer ZIP](https://github.com/penica-TrendAI/swp-windows-performance-toolkit/raw/refs/heads/main/dist/SWP-Customer-Kit.zip)** · [Matching SHA-256 checksum](https://raw.githubusercontent.com/penica-TrendAI/swp-windows-performance-toolkit/main/dist/SWP-Customer-Kit.zip.sha256.txt)
+
+Save both files in the same folder. From that folder in Windows PowerShell, verify the download before extraction.
+
+```powershell
+$expected = ((Get-Content -LiteralPath '.\SWP-Customer-Kit.zip.sha256.txt' -Raw).Trim() -split '\s+')[0]
+if ((Get-FileHash -LiteralPath '.\SWP-Customer-Kit.zip' -Algorithm SHA256).Hash -ne $expected) {
+    throw 'The checksum differs. Download the ZIP and its matching checksum again.'
+}
+```
+
 ## Run a capture
 
 1. Extract the complete customer kit into a new local folder. It contains both pinned Trend support tools. For a source-only installation, follow the [vendor prerequisites](Tools/README.md).
