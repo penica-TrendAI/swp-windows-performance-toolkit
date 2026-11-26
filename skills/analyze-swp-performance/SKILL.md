@@ -15,6 +15,15 @@ Work from the supplied case. Derive customer, host, account, time zone, Windows 
 
 For an optional Procmon repeat, read `Procmon/Operator-notes.json`, `Procmon/SignIn-milestones.json`, `Trend/PassB-Timed-scans.csv` and `PassBSignInScans` together. Verify the saved PML segments against `Procmon/PassB-segments.csv`. Compare `Events/Channel-exports.csv` for A and `Events/PassB/Channel-exports.csv` for B. Report timing coverage and scan totals separately for each reproduction.
 
+## Ask the operator which Windows machine to use
+
+The computer named in the handoff is the source of the evidence. For each investigation, use the machine and access details the operator has supplied for this case. A hostname in a trace or a connection used for an earlier case does not establish access for this one. Ask only for details still needed.
+
+- **WPR trace analysis.** Ask “Which Windows machine with Windows Performance Analyzer (WPA) or xperf should I use for this ETL? How should I access it, and which case folder is approved for the trace and exports?” If the operator runs the tools, ask them to return the trace statistics and process/file I/O exports for the sign-in or application interval. The kit includes `Analysis/Export-WprReports.ps1` for xperf reports.
+- **Live reproduction.** When a finding needs a live test, ask “Which test VM may I use, how should I connect, and which test actions are approved?” Confirm the scope of any reboot, sign-in capture or configuration change before performing it. Identify VM observations separately from findings in the customer trace. One machine can serve both roles if the operator designates it for both.
+
+Connect using the agreed method and transfer case files only to the location approved by the operator. Request a connection alias or account name as needed and keep passwords and private keys out of chat. While waiting for access or exports, continue analyzing the supplied logs, metrics and event records. Record which conclusions still depend on the ETL or a lab test.
+
 ## Map evidence to the investigation
 
 | Case-relative artifact | Tool and purpose |
