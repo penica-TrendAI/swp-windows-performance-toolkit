@@ -1,26 +1,81 @@
 {
   "date": "2026-11-26",
-  "collectorSHA256": "741819cca6a55f33c96931e1348e2741d75c83fcc2d668e48ec81de88d85e27f",
+  "collectorSHA256": "4f6782e86e10059c12e3465c724e2da0d4991ce70bfaff2a49f69b1f6b864d5b",
   "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
   "agentCore": "20.0.3-31610",
   "supportTool": "1.0.0.1203",
   "powerShell": "5.1.22621.7649",
-  "interfaceAcceptance": {
-    "installedStartMenuShortcutOpened": true,
-    "desktopStatusButtonReturnedCaseAndWprState": true,
-    "desktopNoArgumentLaunch": true,
-    "headlessNoStageReturnedHelp": true,
-    "headlessActionAliasAndExplicitCase": true,
-    "resumedSavedCaseInNewProcess": true,
-    "secondPrepareBlocked": true
-  },
-  "scope": "The collector is byte-identical to the Windows-tested release. Windows 11 desktop and headless entry points were verified. Separate earlier captures exercised reboot, same-boot sign-in and recovery. Sign-in scan timing coverage must be assessed for each case.",
   "publicRegressionSuite": {
-    "tests": 45,
-    "passed": 45,
+    "tests": 49,
+    "passed": 49,
     "failed": 0,
-    "powerShell": "5.1.22621.7649",
-    "inputs": "Generated test fixtures and locally supplied pinned vendor bundles. Includes the long diagnostic publication check."
+    "platform": "Windows Server 2022, Windows PowerShell 5.1",
+    "run": "https://github.com/penica-TrendAI/swp-windows-performance-toolkit/actions/runs/45815430272",
+    "inputs": "Generated cases, WPF buttons and pinned vendor bundles. Includes interrupted recovery, changed and missing PML segments, failed event exports and delayed native diagnostic publication."
   },
-  "offlineExportCheck": "Verified the default xperf reports and an initial-window disk summary using a Windows lab ETL."
+  "liveWindows11": {
+    "workflow": "Pass A reboot with WPR, followed by a second reboot with Microsoft Process Monitor 4.12 and a combined handoff. Automatic sign-in was configured on the lab VM. The lab operator steps for enabling and converting the Procmon log used the Microsoft tool.",
+    "passBGUITested": [
+      "Prepare Pass B",
+      "Save Pass B early logs",
+      "Finish B",
+      "Package case"
+    ],
+    "wprBytes": 401866752,
+    "procmonSegments": 2,
+    "procmonBytes": 5479918103,
+    "eventExports": {
+      "PassB": [
+        {
+          "Name": "Exported",
+          "Count": 8
+        }
+      ],
+      "PassA": [
+        {
+          "Name": "Exported",
+          "Count": 8
+        }
+      ]
+    },
+    "verifiedNativeDiagnostics": 2,
+    "agentConfigurationRestored": true,
+    "eventChannelsRestored": 6,
+    "temporaryCollectorTasksRemaining": 0,
+    "verifiedExternalHandoff": true,
+    "handoffMembers": 254,
+    "restorationCheckedWithEvidenceRetained": true,
+    "metricsSamples": {
+      "PassA": {
+        "uniqueTimestamps": 167,
+        "samplesDuringReproduction": 0,
+        "medianIntervalSeconds": 5.014
+      },
+      "PassB": {
+        "uniqueTimestamps": 169,
+        "samplesDuringReproduction": 2,
+        "medianIntervalSeconds": 5.011
+      }
+    },
+    "assessment": "EvidenceGapsRemain",
+    "verifiedTimedScansInSignIn": {
+      "passA": 0,
+      "passB": 0
+    },
+    "scope": "PML files document Windows file operations. Trend engine durations require matched scan records within a corroborated sign-in window. Production coverage depends on the host and reproduction. Customer agent build 20.0.3.29020 requires its own pilot."
+  },
+  "previousValidation": {
+    "collectorSHA256": "741819cca6a55f33c96931e1348e2741d75c83fcc2d668e48ec81de88d85e27f",
+    "interfaceAcceptance": {
+      "installedStartMenuShortcutOpened": true,
+      "desktopStatusButtonReturnedCaseAndWprState": true,
+      "desktopNoArgumentLaunch": true,
+      "headlessNoStageReturnedHelp": true,
+      "headlessActionAliasAndExplicitCase": true,
+      "resumedSavedCaseInNewProcess": true,
+      "secondPrepareBlocked": true
+    },
+    "offlineExportCheck": "Verified the default xperf reports and an initial-window disk summary using a Windows lab ETL.",
+    "otherScenarios": "Separate earlier captures exercised same-boot sign-in, reboot and recovery."
+  }
 }
