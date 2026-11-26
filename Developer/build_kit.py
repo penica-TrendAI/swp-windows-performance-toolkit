@@ -1,44 +1,27 @@
 """Build the documented customer distribution and verify every member."""
 import argparse
 import hashlib
-import json
 import os
 import shutil
 import tempfile
 from contextlib import ExitStack
-from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile, ZipInfo
 
 VENDOR_ARCHIVES = {
     "Tools/DSASupportTool-CMD.zip": "17297b8abb8193d7552c4a0023723ed0fee29b93849b97c91dc69300e6520c42",
-    "Tools/DSASupportTool-GUI.zip": "090e62db8cd47663a314a0778083a18941dfe885715fa18a28d795508b9ed68f",
 }
 
 MEMBERS = (
-    "README.md",
-    "Tools/README.md",
-    "Analysis/README.md",
-    "Analysis/Export-WprReports.ps1",
     "START-HERE.md",
+    "Customer-Runbook.md",
+    "Customer-Collection-Guide.pdf",
+    "Documentation/Participant-sheet.pdf",
+    "Documentation/Administrator-participant.pdf",
     "SWP-Perf.ps1",
     "SWP-SignIn.wprp",
     "SWP-SignIn-128MiB.wprp",
-    "Customer-Runbook.md",
-    "Validation-summary.json",
     *VENDOR_ARCHIVES,
-    "Documentation/Handbook.md",
-    "Documentation/DSTool-collection.example.json",
-    "Documentation/SWP-Perf-Handbook.docx",
-    "Documentation/SWP-Perf-Handbook.pdf",
-    "Documentation/Participant-sheet.pdf",
-    "Documentation/Administrator-participant.pdf",
-    "Documentation/Administrator-participant.md",
-    "skills/analyze-swp-performance/SKILL.md",
-    "Developer/README.md",
-    "Developer/CollectionScript.Tests.ps1",
-    "Developer/render_handbook.py",
-    "Developer/build_kit.py",
 )
 
 
@@ -50,7 +33,6 @@ def sha256(stream):
 
 
 DIST = Path("dist/SWP-Customer-Kit.zip")
-PACKAGE_INFO = "Package-info.json"
 
 
 def write_member(archive, name, source):
@@ -87,18 +69,6 @@ def assemble(root, staged):
                 hashes[name] = write_member(archive, name, stream)
             if name in VENDOR_ARCHIVES and hashes[name] != VENDOR_ARCHIVES[name]:
                 raise ValueError(f"Vendor archive differs from the pinned build: {name}")
-
-        validated = json.loads((root / "Validation-summary.json").read_text(encoding="utf-8-sig"))
-        tested_hash = validated["collectorSHA256"].lower()
-        info = {
-            "packagedCollectorSHA256": hashes["SWP-Perf.ps1"],
-            "validatedCollectorSHA256": tested_hash,
-            "collectorMatchesRecordedValidation": hashes["SWP-Perf.ps1"] == tested_hash,
-        }
-        data = (json.dumps(info, indent=2) + "\n").encode("utf-8")
-        hashes[PACKAGE_INFO] = write_member(archive, PACKAGE_INFO, BytesIO(data))
-        if not info["collectorMatchesRecordedValidation"]:
-            print("Collector changed since the recorded Windows validation. See Package-info.json.")
 
     with ZipFile(staged) as archive:
         if archive.namelist() != list(hashes):

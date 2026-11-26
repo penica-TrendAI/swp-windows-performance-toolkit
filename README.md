@@ -17,7 +17,7 @@ if ((Get-FileHash -LiteralPath '.\SWP-Customer-Kit.zip' -Algorithm SHA256).Hash 
 
 ## Run a capture
 
-1. Extract the complete customer kit into a new local folder. It contains both pinned Trend support tools. For a source-only installation, follow the [vendor prerequisites](Tools/README.md).
+1. Extract the complete customer kit into a new local folder. It includes the verified Trend CMD tool, both WPR profiles, the collector GUI and CLI, and the operator guides. For a source-only installation, follow the [vendor prerequisites](Tools/README.md).
 2. Open elevated **64-bit Windows PowerShell 5.1** on the affected endpoint. From the extracted folder run `.\SWP-Perf.ps1 -Stage InstallTools`.
 3. Use **SWP Performance Collector** in Start, or use the CLI below. Follow the administrator runbook for protection settings, baseline timings and when to stop the trace. [Administrator runbook](Customer-Runbook.md)
 

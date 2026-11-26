@@ -176,7 +176,7 @@ def render(source, destination):
     return count
 
 
-def export_pdfs(document, total, soffice):
+def export_pdfs(document, total, soffice, handouts):
     from pypdf import PdfReader, PdfWriter
     with tempfile.TemporaryDirectory() as folder:
         profile = (Path(folder) / "profile").resolve().as_uri()
@@ -184,12 +184,8 @@ def export_pdfs(document, total, soffice):
                         "--convert-to", "pdf", "--outdir", folder, str(document)], check=True)
         pdf = Path(folder) / document.with_suffix(".pdf").name
         reader = PdfReader(pdf)
-        if len(reader.pages) != total or "Participant instructions" not in reader.pages[1].extract_text():
-            raise ValueError("Review pagination before generating the one-page participant sheet")
-        handouts = {
-            "Participant-sheet.pdf": (1, "Participant instructions"),
-            "Administrator-participant.pdf": (5, "Test your own administrator account"),
-        }
+        if len(reader.pages) != total:
+            raise ValueError(f"Expected {total} pages in {document.name}, rendered {len(reader.pages)}")
         for name, (index, heading) in handouts.items():
             if heading not in " ".join(reader.pages[index].extract_text().split()):
                 raise ValueError(f"Review the source page for {name}")
@@ -198,6 +194,26 @@ def export_pdfs(document, total, soffice):
                 writer.add_page(reader.pages[index])
                 writer.write(stream)
         shutil.copyfile(pdf, document.with_suffix(".pdf"))
+
+
+def export_collection_guide(docs, source, soffice):
+    sections = re.split(r"(?=^## )", source, flags=re.MULTILINE)
+    by_title = {section.splitlines()[0]: section for section in sections if section.startswith("## ")}
+    operator_sections = (
+        "Participant instructions", "Plan the capture", "Install and check the kit",
+        "Prepare the endpoint", "Test your own administrator account", "Record timings and finish",
+        "Policy context and protection", "Verify and return the evidence", "Restore and close",
+        "Recover an interrupted capture", "Follow a native diagnostic request", "Optional Procmon repeat",
+        "Actions in the collector window",
+    )
+    intro = (docs.parent / "START-HERE.md").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as folder:
+        source_path = Path(folder) / "Collection.md"
+        source_path.write_text(intro + "\n" + "".join(by_title["## " + title] for title in operator_sections), encoding="utf-8")
+        document = source_path.with_suffix(".docx")
+        pages = render(source_path, document)
+        export_pdfs(document, pages, soffice, {})
+        shutil.copyfile(document.with_suffix(".pdf"), docs.parent / "Customer-Collection-Guide.pdf")
 
 
 if __name__ == "__main__":
@@ -214,5 +230,9 @@ if __name__ == "__main__":
     solo = text.split(heading + "\n", 1)[1].split("\n## ", 1)[0]
     (docs / "Administrator-participant.md").write_text("# " + heading[3:] + "\n" + solo.rstrip() + "\n", encoding="utf-8")
     if args.pdf:
-        export_pdfs(output, pages, args.soffice)
+        export_pdfs(output, pages, args.soffice, {
+            "Participant-sheet.pdf": (1, "Participant instructions"),
+            "Administrator-participant.pdf": (5, "Test your own administrator account"),
+        })
+        export_collection_guide(docs, text, args.soffice)
     print(output)

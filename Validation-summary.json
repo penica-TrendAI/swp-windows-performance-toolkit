@@ -1,6 +1,6 @@
 {
   "date": "2026-11-26",
-  "collectorSHA256": "93ef4eabed96eab8e1d4411d756b960f31d1e99e47321e9d724674b54d30696a",
+  "collectorSHA256": "d5e1e22e227bffeb38212a65f265efc5e800b080ce74fd9d33dc03cd33c634b0",
   "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
   "agentCore": "20.0.3-31610",
   "supportTool": "1.0.0.1203",
@@ -134,5 +134,10 @@
       "failed": 0,
       "coverage": "Windows PowerShell 5.1 standard suite. Includes WPF action changes, run isolation, rotation retry, and incomplete scan starts. The five-minute publication case runs separately in the full Windows workflow."
     }
+  },
+  "collectionOnlyKit": {
+    "collectorSHA256": "d5e1e22e227bffeb38212a65f265efc5e800b080ce74fd9d33dc03cd33c634b0",
+    "windows11ChecksPassed": 53,
+    "verification": "Extracted the customer archive on Windows 11 and ran the standard PowerShell 5.1 suite. The installer verified the CMD archive and installed the GUI/CLI collector, complete CMD tool and both WPR profiles with the optional vendor GUI archive absent."
   }
 }

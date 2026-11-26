@@ -1,18 +1,17 @@
-# SWP performance collection kit
+# Windows sign-in and application performance collection
 
-Open [the handbook PDF](Documentation/SWP-Perf-Handbook.pdf) for installation, collection, troubleshooting and development. It covers Windows sign-in and first application launches on a computer protected by TrendAI Vision One Server & Workload Protection or Deep Security Agent.
+## Start here
 
-| I am… | Open this first |
+Use this kit on the affected Windows computer to record one reboot or full sign-out/sign-in and the agreed application launches.
+
+| Who is running the test? | Instructions |
 |---|---|
-| The person experiencing the delay | [One-page participant instructions](Documentation/Participant-sheet.pdf). For per-file scan timings after restart, wait two full minutes from the visible Windows sign-in screen, then sign in locally. |
-| The Windows administrator | [Administrator runbook](Customer-Runbook.md) and handbook pages 3–10. |
-| The administrator signing in to my own account | [Checklist for an administrator testing their own account](Documentation/Administrator-participant.pdf), also in [copyable Markdown](Documentation/Administrator-participant.md). One person can run and reproduce the test. |
-| The Trend policy administrator | Handbook page 8, “Policy context and protection”, followed by the restoration checks on page 10. |
-| The support analyst | [Evidence analysis instructions](skills/analyze-swp-performance/SKILL.md) and handbook pages 11–12, “Read the evidence” and “Interpret scan times”. |
-| The developer or release maintainer | [Developer guide](Developer/README.md), handbook pages 16–22 and [validation summary](Validation-summary.json). |
+| Endpoint or Trend policy administrator | Read the [collection guide](Customer-Collection-Guide.pdf). The [administrator runbook](Customer-Runbook.md) includes copyable PowerShell commands, recovery and cleanup. |
+| Person experiencing the delay | Use the [one-page timing sheet](Documentation/Participant-sheet.pdf). |
+| Administrator testing their own sign-in | Use the [administrator checklist](Documentation/Administrator-participant.pdf). |
 
-The handbook is also available in [Word](Documentation/SWP-Perf-Handbook.docx) and [Markdown](Documentation/Handbook.md). The collector and WPR profiles install from the extracted kit. The full customer ZIP includes both verified support-tool archives. In a Git checkout, the ZIP and SHA-256 file are in `dist`. For installation directly from source, see the [vendor prerequisites](Tools/README.md). The Developer folder is for maintenance.
+**Install.** Download the matching SHA-256 file beside the customer ZIP. Follow “Install and check the kit” in the collection guide to verify the checksum, extract to a fresh folder and run `SWP-Perf.ps1 -Stage InstallTools` in elevated 64-bit Windows PowerShell 5.1. The kit includes the Trend DSA Support Tool CMD for metrics and both WPR recording profiles. If Trend support specifically requests its separate GUI, the runbook explains how to download it.
 
-Endpoint administrators should use 64-bit Windows PowerShell 5.1. Follow the runbook from the extracted folder, starting with `InstallTools`. After installation, use **SWP Performance Collector** in Start or keep using PowerShell with explicit `-Stage` commands. Either route can resume the same capture after sign-in. Handbook page 23 explains each drop-down action and the background tasks. Give participants the one-page sheet. The expected return is the full `AllEvidence-CASE-…zip` plus its matching checksum through the agreed support channel. Cleanup can delete **all cases** under `C:\SWP-Perf`. Verify the transferred evidence first.
+**Collect.** Open **SWP Performance Collector** from Start or choose a PowerShell stage. For a delayed reboot test, wait two minutes from when the sign-in screen appears. Stop the trace once the agreed desktop or application milestone is reached. Enter timing notes, then finish and package the case. An optional Pass B requires Microsoft Process Monitor as described in the runbook.
 
-Documentation edition 26 November 2026. Collector revision 26 November 2026. The validation summary identifies the actual Windows and Trend agent versions used.
+**Return.** Send the verified `AllEvidence-CASE-…zip` and matching checksum from `C:\SWP-Handoff` through the agreed support channel. Restore the recorded protection settings and follow the cleanup instructions after verifying transfer.

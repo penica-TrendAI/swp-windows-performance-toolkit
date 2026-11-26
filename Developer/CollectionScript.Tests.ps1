@@ -373,7 +373,12 @@ switch ($Stage) {
             Test-Case 'Bundled tools install, verify and preserve existing configuration' {
                 $ToolRoot=Join-Path $Root 'Installed Tools';$ConfigPath=Join-Path $ToolRoot 'DSASupportTool\DSTool.json'
                 Install-BundledTools -KitRoot $VendorKitRoot
-                Assert-True ((Test-Path -LiteralPath "$ToolRoot\DSASupportTool\DSASupportTool_CMD.exe") -and (Test-Path -LiteralPath "$ToolRoot\DSASupportTool_GUI\DSASupportTool_GUI.exe")) 'Bundled CMD or GUI missing.'
+                Assert-True (Test-Path -LiteralPath "$ToolRoot\DSASupportTool\DSASupportTool_CMD.exe") 'Required CMD tool missing.'
+                $hasVendorGui = Test-Path -LiteralPath "$VendorKitRoot\Tools\DSASupportTool-GUI.zip"
+                Assert-True ((Test-Path -LiteralPath "$ToolRoot\DSASupportTool_GUI\DSASupportTool_GUI.exe") -eq $hasVendorGui) 'Optional vendor GUI installation differs from supplied inputs.'
+                foreach ($file in 'SWP-Perf.ps1','SWP-SignIn.wprp','SWP-SignIn-128MiB.wprp') {
+                    Assert-True ((Get-FileHash "$ToolRoot\$file").Hash -eq (Get-FileHash "$VendorKitRoot\$file").Hash) "Missing or changed collector file $file"
+                }
                 $Original=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json
                 $Original.Metrics|Add-Member -NotePropertyName preservedTestField -NotePropertyValue 'keep'
                 $Original|ConvertTo-Json -Depth 32|Set-Content -LiteralPath $ConfigPath -Encoding UTF8
