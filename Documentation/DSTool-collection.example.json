@@ -1,0 +1,60 @@
+{
+  "Log Collection": {
+    "timerInSecondDebug": 0,
+    "enableEYES": 0,
+    "enableUMH": 0,
+    "enableAEGIS": 0,
+    "enableAMSP": 0,
+    "disableDebugAfterTimer": 1,
+    "enableLogCollection": 0
+  },
+  "Process Monitor": {
+    "timerInSecondProcMon": 10,
+    "enableChangeAltitude": 0,
+    "enableProcMon": 0
+  },
+  "WPR": {
+    "optionsWPR": "-start CPU -start DiskIO -start FileIO -start Registry -start Network -start Heap -start Pool -start VirtualAllocation -start Handle -start Minifilter",
+    "enableWPR": 0,
+    "timerInSecondWPR": 10
+  },
+  "Network Packet Capture": {
+    "enableNetPCap": 0,
+    "timerInSecondNetPCap": 10
+  },
+  "Network Check": {
+    "enableNetCheck": 0,
+    "URL2NetCheck": ""
+  },
+  "Check and Fix": {
+    "Inspect CA certificates": {
+      "enableCheck": 0,
+      "enableFix": 0
+    },
+    "AntiMalware Status Analysis": {
+      "enableCheck": 0,
+      "enableFix": 0
+    },
+    "AntiMalware Test - Eicar": {
+      "enableCheck": 0,
+      "enableFix": 0
+    },
+    "MS Azure Code Signing Check": {
+      "enableCheck": 0,
+      "enableFix": 0
+    },
+    "Troubleshoot UMH": {
+      "enableCheck": 0,
+      "enableFix": 0
+    }
+  },
+  "Metrics": {
+    "MetricsDurationInSecond": 900,
+    "MetricsIntervalInSecond": 5,
+    "collectMetrics": 1
+  },
+  "Tool": {
+    "PressKeyToEnd": 0,
+    "enableFeedback": 0
+  }
+}

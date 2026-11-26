@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-26",
+  "collectorSHA256": "741819cca6a55f33c96931e1348e2741d75c83fcc2d668e48ec81de88d85e27f",
+  "platform": "Windows 11 build 22631; Windows PowerShell 5.1",
+  "agentCore": "20.0.3-31610",
+  "supportTool": "1.0.0.1203",
+  "powerShell": "5.1.22621.7649",
+  "interfaceAcceptance": {
+    "installedStartMenuShortcutOpened": true,
+    "desktopStatusButtonReturnedCaseAndWprState": true,
+    "desktopNoArgumentLaunch": true,
+    "headlessNoStageReturnedHelp": true,
+    "headlessActionAliasAndExplicitCase": true,
+    "resumedSavedCaseInNewProcess": true,
+    "secondPrepareBlocked": true
+  },
+  "scope": "The collector is byte-identical to the Windows-tested release. Windows 11 desktop and headless entry points were verified. Separate earlier captures exercised reboot, same-boot sign-in and recovery. Sign-in scan timing coverage must be assessed for each case.",
+  "publicRegressionSuite": {
+    "tests": 45,
+    "passed": 45,
+    "failed": 0,
+    "powerShell": "5.1.22621.7649",
+    "inputs": "Generated test fixtures and locally supplied pinned vendor bundles. Includes the long diagnostic publication check."
+  },
+  "offlineExportCheck": "Verified the default xperf reports and an initial-window disk summary using a Windows lab ETL."
+}

@@ -1,0 +1,8 @@
+# The collector's content hash is verified by the kit builder on every platform.
+*.ps1 text eol=lf
+*.wprp text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.pdf binary
+*.docx binary

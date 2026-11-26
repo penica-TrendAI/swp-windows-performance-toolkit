@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0" Author="SWP performance investigation">
+  <Profiles>
+    <SystemCollector Id="SignInCollector" Name="SWP Sign-in Kernel">
+      <BufferSize Value="256"/>
+      <Buffers Value="128"/>
+    </SystemCollector>
+    <SystemProvider Id="SignInProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="Filename"/>
+        <Keyword Value="FileIO"/>
+        <Keyword Value="FileIOInit"/>
+        <Keyword Value="DiskIO"/>
+        <Keyword Value="DiskIOInit"/>
+      </Keywords>
+    </SystemProvider>
+    <Profile Id="SWPSignIn.Light.File" Name="SWPSignIn" DetailLevel="Light" LoggingMode="File"
+             Description="Sign-in process lifetimes, logical file operations, paths and physical disk I/O">
+      <Collectors>
+        <SystemCollectorId Value="SignInCollector">
+          <SystemProviderId Value="SignInProvider"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>
